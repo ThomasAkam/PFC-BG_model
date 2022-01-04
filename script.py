@@ -4,14 +4,16 @@ import numpy as np
 from tensorflow import keras
 from tensorflow.keras import layers
 import pylab as plt
-from scipy.ndimage import gaussian_filter1d
 from sklearn.decomposition import PCA
 
 import Two_step_task as ts
 
-#%% Utility funcs 
-
-def generate_data(task, n_steps):
+#%% train model.    
+    
+def train_model(n_steps=20000, n_back=30, batch=100, n_lstm=12, learning_rate=0.05,
+                epochs=1, good_prob=0.9):
+    # Get data
+    task = ts.Two_step(good_prob=good_prob, block_len=[30,31])
     states = np.zeros(n_steps, int)
     actions = np.zeros(n_steps, int)
     s = task.reset()
@@ -21,41 +23,14 @@ def generate_data(task, n_steps):
         s, r, info = task.step(actions[i])
     states_v = keras.utils.to_categorical(states, task.n_states)
     actions_v = keras.utils.to_categorical(actions, task.n_actions)
-    state_action = np.hstack([states_v, actions_v])
-    return states, actions, state_action
-
-def plot_reward_probs(states, y_pred, fig_no=1):
-    A_out_inds = np.where(states == ts.sec_step_A)[0][:-1]+1
-    B_out_inds = np.where(states == ts.sec_step_B)[0][:-1]+1
-    A_reward_probs = y_pred[:,ts.reward_A]
-    B_reward_probs = y_pred[:,ts.reward_B]
-    plt.figure(fig_no, clear=True)
-    plt.plot(A_out_inds, A_reward_probs[A_out_inds])
-    plt.plot(B_out_inds, B_reward_probs[B_out_inds])
-    plt.ylabel('Estimated reward probs')
-    
-def plot_lstm_state_PC1(states, lstm_state, fig_no=1):
-    choice_inds = np.where(states == ts.choice)[0]
-    ch_state = lstm_state[choice_inds,:]
-    pca = PCA(n_components=1).fit(ch_state)
-    ch_state_pc1 = pca.transform(ch_state)
-    plt.figure(fig_no, clear=True)
-    plt.plot(ch_state_pc1 , label='lstm state PC1')
-    plt.ylabel('LSTM state PC1')
-    plt.legend()
-
-#%% train model.    
-    
-def train_model(n_steps=20000, n_back=30, batch=100, n_lstm=16, learning_rate=0.05,
-                epochs=1, good_prob=0.9):
-    # Get data
-    task = ts.Two_step(good_prob=good_prob, block_len=[20,21])
-    states, actions, states_actions = generate_data(task, n_steps)
+    states_actions = np.hstack([states_v, actions_v])
+    states_actions[states==ts.reward_A, ts.initiate] = 1
+    states_actions[states==ts.reward_B, ts.initiate] = 1
     x = [] # State-action sequences
     y = [] # Next states
     for i in range(0, len(states_actions) - n_back):
         x.append(states_actions[i:i+n_back,:])
-        y.append(states_actions[i+n_back, :task.n_states])
+        y.append(states_v[i+n_back,:])
     print("Number of sequences:", len(x))
     x = np.stack(x)
     y = np.stack(y)
@@ -73,10 +48,23 @@ def train_model(n_steps=20000, n_back=30, batch=100, n_lstm=16, learning_rate=0.
     model.fit(x[:-1000], y[:-1000], batch_size=batch, epochs=epochs)
     # Plot reward probabilities on test data.
     y_pred = model.predict(x[-1000:])
-    plot_reward_probs(states[-1000:], y_pred)
-    
+    A_out_inds = np.where(states[-1000:] == ts.sec_step_A)[0][:-1]+1
+    B_out_inds = np.where(states[-1000:] == ts.sec_step_B)[0][:-1]+1
+    A_reward_probs = y_pred[:,ts.reward_A]
+    B_reward_probs = y_pred[:,ts.reward_B]
+    plt.figure()
+    plt.subplot(2,1,1)
+    plt.plot(A_out_inds, A_reward_probs[A_out_inds])
+    plt.plot(B_out_inds, B_reward_probs[B_out_inds])
+    plt.ylabel('Estimated reward probs')
     # Look at features of lstm layer
     lstm_output, lstm_state = lstm_output_model.predict(x[-1000:]) 
-    plot_lstm_state_PC1(states[-1000:], lstm_state, fig_no=2)
+    choice_inds = np.where(states[-1000:] == ts.choice)[0]
+    ch_state = lstm_state[choice_inds,:]
+    pca = PCA(n_components=1).fit(ch_state)
+    ch_state_pc1 = pca.transform(ch_state)
+    plt.subplot(2,1,2)
+    plt.plot(ch_state_pc1 , label='lstm state PC1')
+    plt.ylabel('LSTM state PC1')
 
     
