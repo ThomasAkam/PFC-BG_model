@@ -17,6 +17,7 @@ episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
 entropy_loss_weight = 0.01
+n_replay = 5
 
 #Task params.
 good_prob = 0.9
@@ -25,7 +26,7 @@ block_len = [20,21]
 # PFC model parameters.
 n_back = 30
 n_pfc = 12
-pfc_learning_rate = 0.001
+pfc_learning_rate = 0.005
 
 # Striatum model parameters.
 n_str = 12
@@ -109,7 +110,9 @@ def pretrain_model(n_steps=100000, batch=100, fig_no=1):
     plt.plot(ch_state_pc1 , label='lstm state PC1')
     plt.ylabel('LSTM state PC1')
     plt.show()
-
+    tl = PFC_model.train_on_batch(x[-episode_len:],y[-episode_len:])
+    print(f'Training loss: {tl :.3f}')
+    
 # pretrain_model()
 
 #%% Basal ganglia model
@@ -126,7 +129,9 @@ str_optimizer = keras.optimizers.Adam(learning_rate=str_learning_rate)
 
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
-def store_history(s, Sf, r, a):
+# Helper functions.
+
+def store_trial_data(s, Sf, r, a):
     'Store state, reward and subseqent action for current timestep.'
     global states, state_f, rewards, actions
     states.append(s)
@@ -134,6 +139,8 @@ def store_history(s, Sf, r, a):
     rewards.append(r)
     actions.append(a)
     pfc_input.append(pfc_input_buffer)
+    
+# Run model.
 
 s = task.reset() # Get initial state as integer.
 r = 0
@@ -151,6 +158,8 @@ for e in range(n_episodes):
     actions = [] # int
     pfc_input = []
     
+    episode_buffer = []
+    
     while True:
         step_n += 1
         
@@ -160,7 +169,7 @@ for e in range(n_episodes):
         a = np.random.choice(task.n_actions, p=np.squeeze(choice_probs))
         
         # Store history.
-        store_history(s, Sf, r, a)
+        store_trial_data(s, Sf, r, a)
         
         # Update the PFC networks inputs.
         update_pfc_inputs(s,a)
@@ -173,42 +182,41 @@ for e in range(n_episodes):
         
         episode_trials = task.trial_n - start_trial
         if episode_trials == episode_len or step_n >= max_step_per_episode and s == 0:
-            break # End of episode.        
-
-    # Update Striatum weights.
-    
-    returns = np.zeros([len(rewards),1], dtype='float32')
-    returns[-1] = r
-    for i in range(1, len(returns)):
-        returns[-i-1] = rewards[-i] + gamma*returns[-i]
+            break # End of episode.  
             
-    with tf.GradientTape() as tape:
-        choice_probs, values = Str_model(tf.convert_to_tensor(state_f))
-        advantages = returns - values
-        # Critic loss.
-        critic_loss = sse_loss(values, returns)
-        # Actor loss
-        actor_losses = []
-        for i,a in enumerate(actions):
-            log_chosen_prob = tf.math.log(choice_probs[i,a])
-            entropy = -tf.reduce_sum(choice_probs[i,:]*tf.math.log(choice_probs[i,:]))
-            actor_losses.append(-log_chosen_prob*advantages[i]-entropy*entropy_loss_weight)
-        actor_loss = tf.reduce_sum(actor_losses)
-        # Apply combined loss.    
-        grads = tape.gradient(critic_loss+actor_loss, Str_model.trainable_variables)
-        str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
+    episode_buffer.append((states, state_f, rewards, actions, pfc_input))
+
+    # Train networks.
+    
+    for episode in episode_buffer[-n_replay:]:
+        states, state_f, rewards, actions, pfc_input = episode
+
+        # Update Striatum weights.
         
-    # Update PFC weights
-    y = keras.utils.to_categorical(states, task.n_states)
-    tl = PFC_model.train_on_batch(np.array(pfc_input),y)
+        returns = np.zeros([len(rewards),1], dtype='float32')
+        #returns[-1] = r
+        for i in range(1, len(returns)):
+            returns[-i-1] = rewards[-i] + gamma*returns[-i]
+                
+        with tf.GradientTape() as tape:
+            choice_probs, values = Str_model(tf.convert_to_tensor(state_f))
+            advantages = returns - values
+            # Critic loss.
+            critic_loss = sse_loss(values, returns)
+            # Actor loss
+            actor_losses = []
+            for i,a in enumerate(actions):
+                log_chosen_prob = tf.math.log(choice_probs[i,a])
+                entropy = -tf.reduce_sum(choice_probs[i,:]*tf.math.log(choice_probs[i,:]))
+                actor_losses.append(-log_chosen_prob*advantages[i]-entropy*entropy_loss_weight)
+            actor_loss = tf.reduce_sum(actor_losses)
+            # Apply combined loss.    
+            grads = tape.gradient(critic_loss+actor_loss, Str_model.trainable_variables)
+            str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
+            
+        # Update PFC weights
+        y = keras.utils.to_categorical(states, task.n_states)
+        tl = PFC_model.train_on_batch(np.array(pfc_input),y)
     
     print(f'Episode: {e} Steps: {step_n} Trials: {episode_trials} '
           f' Rew. per tr.: {np.sum(rewards)/episode_trials :.2f} PFC tr. loss: {tl :.3f}')
-    
-    
-    
-    
-    
-    
-    
-    
