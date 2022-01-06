@@ -4,29 +4,30 @@ def withprob(p):
     return np.random.rand() < p
 
 
-# Constants.
-
+# State and action IDs
 initiate = 0
 sec_step_A = 1
 sec_step_B = 2
 
+#Action IDs
 choose_A = 3
 choose_B = 4
 
 choice = 3
 reward_A = 4
-reward_B = 5 
+reward_B = 5
 
 class Two_step():
 
-    def __init__(self, common_prob=0.8, good_prob=0.8, block_len=[20,40]):
-        super(Two_step, self).__init__()    
+    def __init__(self, common_prob=0.8, good_prob=0.8, block_len=[20,40], punish_invalid=True):
+        super(Two_step, self).__init__()
+        self.punish_invalid = punish_invalid
         self.common_prob  = common_prob
         self.good_prob = good_prob
         self.block_len = block_len 
         self.reset()
         self.n_actions = 5 # {0: initiate, 1: choice A, 2: choice B, 3: sec. step A, 4: sec. step B}
-        self.n_states = 6 # {0: initiate, 1: choice, 2: sec. step A, 3: sec. step B, 4: reward A, 5: reward B}
+        self.n_states  = 6 # {0: initiate, 1: choice, 2: sec. step A, 3: sec. step B, 4: reward A, 5: reward B}
 
     def step(self, action):
     # Execute one time step within the environment
@@ -42,6 +43,8 @@ class Two_step():
                     self.A_good = not self.A_good
                     self.block_trial = 0
                     self.trials_till_reversal = np.random.randint(*self.block_len)
+            elif self.punish_invalid:
+                reward = -1
         elif self.state == choice: # Choice state
             if action == choose_A:
                 if withprob(self.common_prob):
@@ -53,23 +56,29 @@ class Two_step():
                     self.state = sec_step_B
                 else:
                     self.state = sec_step_A
-        elif self.state == sec_step_A:
+            elif self.punish_invalid:
+                reward = -1
+        elif self.state == sec_step_A: # Second step A state
             if action == sec_step_A:
                 if ((self.A_good and withprob(self.good_prob)) or
                     (not self.A_good and withprob(1-self.good_prob))):
-                    self.state = reward_A # Reward A
                     reward = 1
+                    self.state = reward_A
                 else:
                     self.state = initiate
+            elif self.punish_invalid:
+                reward = -1
         elif self.state == sec_step_B:
             if action == sec_step_B: 
                 if ((self.A_good and withprob(1 - self.good_prob)) or
                     (not self.A_good and withprob(self.good_prob))):
-                    self.state = reward_B
                     reward = 1
+                    self.state = reward_B
                 else:
                     self.state = initiate
-        return self.state, reward, (self.block_trial, self.A_good)
+            elif self.punish_invalid:
+                reward = -1
+        return self.state, reward
     
     def reset(self):
         # Reset the state of the environment to an initial state
@@ -78,7 +87,8 @@ class Two_step():
         self.block_trial = 0
         self.trials_till_reversal = np.random.randint(*self.block_len)
         self.A_good = np.random.rand() > 0.5 # True if A is good, false if B is good.
-        self.state = 0 # initiate
+        self.state = initiate # initiate
+        self.prev_state = None
         return self.state
 
     def sample_appropriate_action(self, state):
