@@ -17,7 +17,7 @@ episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
 entropy_loss_weight = 0.01
-n_replay = 5
+n_replay = 1
 
 #Task params.
 good_prob = 0.9
@@ -25,7 +25,7 @@ block_len = [20,21]
 
 # PFC model parameters.
 n_back = 30
-n_pfc = 12
+n_pfc = 16
 pfc_learning_rate = 0.005
 
 # Striatum model parameters.
@@ -39,14 +39,14 @@ task = ts.Two_step(good_prob=good_prob, block_len=block_len, punish_invalid=Fals
 #%% PFC model.
 
 pfc_inputs = layers.Input(shape=(n_back, task.n_states+task.n_actions)) # Inputs are 1 hot encoding of alternating states and actions.
-lstm = layers.LSTM(n_pfc, unroll=True, name='lstm', return_state=True)(pfc_inputs) # Recurrent layer.
-state_pred = layers.Dense(task.n_states, activation='softmax', name='state_pred')(lstm[0]) # Output layer predicts next state
+rnn = layers.GRU(n_pfc, unroll=True, name='rnn')(pfc_inputs) # Recurrent layer.
+state_pred = layers.Dense(task.n_states, activation='softmax', name='state_pred')(rnn) # Output layer predicts next state
 PFC_model = keras.Model(inputs=pfc_inputs, outputs=state_pred)
 pfc_optimizer = keras.optimizers.Adam(learning_rate=pfc_learning_rate)
 PFC_model.compile(loss="categorical_crossentropy", optimizer=pfc_optimizer)
-# Model variant used to get state of LSTM layer.
+# Model variant used to get state of RNN layer.
 PFC_state_view = keras.Model(inputs=PFC_model.input,
-                             outputs=PFC_model.get_layer('lstm').output[2])
+                             outputs=PFC_model.get_layer('rnn').output)
 
 pfc_input_buffer = np.zeros([n_back, task.n_states+task.n_actions])
 
@@ -100,15 +100,15 @@ def pretrain_model(n_steps=100000, batch=100, fig_no=1):
     plt.plot(A_out_inds, A_reward_probs[A_out_inds])
     plt.plot(B_out_inds, B_reward_probs[B_out_inds])
     plt.ylabel('Estimated reward probs')
-    # Look at features of lstm layer
-    lstm_state = PFC_state_view.predict(x[-1000:]) 
+    # Look at features of rnn layer
+    rnn_state = PFC_state_view.predict(x[-1000:]) 
     choice_inds = np.where(states[-1000:] == ts.choice)[0]
-    ch_state = lstm_state[choice_inds,:]
+    ch_state = rnn_state[choice_inds,:]
     pca = PCA(n_components=1).fit(ch_state)
     ch_state_pc1 = pca.transform(ch_state)
     plt.subplot(2,1,2)
-    plt.plot(ch_state_pc1 , label='lstm state PC1')
-    plt.ylabel('LSTM state PC1')
+    plt.plot(ch_state_pc1 , label='rnn state PC1')
+    plt.ylabel('RNN state PC1')
     plt.show()
     tl = PFC_model.train_on_batch(x[-episode_len:],y[-episode_len:])
     print(f'Training loss: {tl :.3f}')
@@ -146,6 +146,8 @@ s = task.reset() # Get initial state as integer.
 r = 0
 Sf = get_state_features(s)
 
+episode_buffer = []
+
 for e in range(n_episodes):
     
     step_n = 0
@@ -157,8 +159,6 @@ for e in range(n_episodes):
     rewards = []
     actions = [] # int
     pfc_input = []
-    
-    episode_buffer = []
     
     while True:
         step_n += 1
@@ -180,16 +180,16 @@ for e in range(n_episodes):
         # Get new state vector conbining observable and PFC features.
         Sf = get_state_features(s)
         
-        episode_trials = task.trial_n - start_trial
-        if episode_trials == episode_len or step_n >= max_step_per_episode and s == 0:
+        n_trials = task.trial_n - start_trial
+        if n_trials == episode_len or step_n >= max_step_per_episode and s == 0:
             break # End of episode.  
             
-    episode_buffer.append((states, state_f, rewards, actions, pfc_input))
+    episode_buffer.append((states, state_f, rewards, actions, pfc_input, n_trials))
 
     # Train networks.
     
     for episode in episode_buffer[-n_replay:]:
-        states, state_f, rewards, actions, pfc_input = episode
+        states, state_f, rewards, actions, pfc_input, n_trials = episode
 
         # Update Striatum weights.
         
@@ -218,5 +218,27 @@ for e in range(n_episodes):
         y = keras.utils.to_categorical(states, task.n_states)
         tl = PFC_model.train_on_batch(np.array(pfc_input),y)
     
-    print(f'Episode: {e} Steps: {step_n} Trials: {episode_trials} '
-          f' Rew. per tr.: {np.sum(rewards)/episode_trials :.2f} PFC tr. loss: {tl :.3f}')
+    print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
+          f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
+    
+#%% Analysis
+
+def plot_performance():
+    steps_per_trial = []
+    rewards_per_trial = []
+    for episode in episode_buffer:
+        states, state_f, rewards, actions, pfc_input = episode
+        n_trials = 0
+        for s,a in zip(states, actions):
+            n_trials += s == ts.choice and a in (ts.choose_A, ts.choose_B)
+        steps_per_trial.append(len(states)/n_trials)
+        rewards_per_trial.append(sum(rewards)/n_trials)
+    plt.figure()
+    plt.subplot(2,1,1)
+    plt.plot(steps_per_trial)
+    plt.ylabel('Steps per trial')
+    plt.subplot(2,1,2)
+    plt.plot(rewards_per_trial)
+    plt.ylabel('Rewards per trial')
+    
+    
