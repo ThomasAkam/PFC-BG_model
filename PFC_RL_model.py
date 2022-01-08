@@ -223,22 +223,64 @@ for e in range(n_episodes):
     
 #%% Analysis
 
-def plot_performance():
+def plot_performance(last_n=100):
     steps_per_trial = []
     rewards_per_trial = []
     for episode in episode_buffer:
-        states, state_f, rewards, actions, pfc_input = episode
-        n_trials = 0
-        for s,a in zip(states, actions):
-            n_trials += s == ts.choice and a in (ts.choose_A, ts.choose_B)
+        states, state_f, rewards, actions, pfc_input, n_trials = episode
         steps_per_trial.append(len(states)/n_trials)
         rewards_per_trial.append(sum(rewards)/n_trials)
     plt.figure()
     plt.subplot(2,1,1)
     plt.plot(steps_per_trial)
+    plt.axhline(3, c='k', ls=':')
+    plt.xlim(0,len(episode_buffer))
     plt.ylabel('Steps per trial')
     plt.subplot(2,1,2)
     plt.plot(rewards_per_trial)
+    plt.axhline(0.5, c='k', ls='--')
+    cor_ch_rr = task.good_prob*task.common_prob+(1-task.good_prob)*(1-task.common_prob) # Reward rate if every choice is correct
+    plt.axhline(cor_ch_rr, c='k', ls=':')
     plt.ylabel('Rewards per trial')
+    plt.xlabel('Episode #')
+    plt.yticks(np.arange(0.4,0.9,0.1))
+    plt.xlim(0,len(episode_buffer))
+    print(f'Ave. rewards per trial, last {last_n} episodes: {np.mean(rewards_per_trial[-last_n:]) :.2f}')
     
+def stay_probability_analysis(last_n=100):
+    stay_probs = []
+    for episode in episode_buffer[-last_n:]:
+        states, state_f, rewards, actions, pfc_input, n_trials = episode
+        choices, sec_steps, outcomes = [],[],[]
+        assert states[0] == ts.choice, 'first state of episode should be choice'
+        for s,a in zip(states, actions):
+            if s == ts.choice and a == ts.choose_A:
+                choices.append(1)
+            elif s == ts.choice and a == ts.choose_B:
+                choices.append(0)
+            elif s == ts.sec_step_A and a == ts.sec_step_A:
+                sec_steps.append(1)
+            elif s == ts.sec_step_B and a == ts.sec_step_B:
+                    sec_steps.append(0)
+            elif s in (ts.reward_A, ts.reward_B) and a == ts.initiate:
+                outcomes.append(1)
+            elif s == ts.initiate and a == ts.initiate:
+                outcomes.append(0)
+        assert len(choices) == len(sec_steps) == len(outcomes), 'something went wrong.'
+        choices = np.array(choices, bool)
+        sec_steps = np.array(sec_steps, bool)
+        transitions = choices == sec_steps
+        outcomes = np.array(outcomes, bool)
+        stays = choices[1:] == choices[:-1]
+        sp_comm_rew = np.mean(stays[ transitions[:-1] &  outcomes[:-1]])
+        sp_rare_rew = np.mean(stays[~transitions[:-1] &  outcomes[:-1]])
+        sp_comm_non = np.mean(stays[ transitions[:-1] & ~outcomes[:-1]])
+        sp_rare_non = np.mean(stays[~transitions[:-1] & ~outcomes[:-1]])
+        stay_probs.append(np.array([sp_comm_rew, sp_rare_rew, sp_comm_non, sp_rare_non]))
+    plt.figure()
+    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=np.std(stay_probs,0)/np.sqrt(last_n))
+    plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
+    plt.ylim(ymin=0)
+            
+        
     
