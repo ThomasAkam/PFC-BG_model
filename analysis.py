@@ -15,7 +15,7 @@ def plot_performance(episode_buffer, task, last_n=100, fig_no=1):
     steps_per_trial = []
     rewards_per_trial = []
     for episode in episode_buffer:
-        states, state_f, rewards, actions, values, pfc_input, n_trials = episode
+        states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
         steps_per_trial.append(len(states)/n_trials)
         rewards_per_trial.append(sum(rewards)/n_trials)
     plt.figure(fig_no, clear=True)
@@ -53,7 +53,7 @@ def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
     plt.ylabel('Stay probability')
     
 def _get_CSTO(episode, return_inds=False):
-    states, state_f, rewards, actions, values, pfc_input, n_trials = episode
+    states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
     choices, sec_steps, outcomes = [],[],[]
     assert states[0] == ts.choice, 'first state of episode should be choice'
     for s,a in zip(states, actions):
@@ -78,7 +78,7 @@ def _get_CSTO(episode, return_inds=False):
     
 def sec_step_value_analysis(episode_buffer, gamma):
     episode = episode_buffer[-1]
-    states, state_f, rewards, actions, values, pfc_input, n_trials = episode
+    states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
     RPE = np.diff(np.squeeze(values))+rewards[1:]
     sec_step_inds = np.where(np.isin(states, (ts.sec_step_A, ts.sec_step_B)))[0]
     rew_ss_inds = np.where(np.array(rewards)[sec_step_inds[:-1]+1] == 1)
