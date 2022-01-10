@@ -8,11 +8,12 @@ import pylab as plt
 from sklearn.decomposition import PCA
 
 import Two_step_task as ts
+import analysis as an
 
 #%% Parameters.
 
 # Simulation parameters.
-n_episodes = 1000
+n_episodes = 2000
 episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
@@ -20,16 +21,16 @@ entropy_loss_weight = 0.01
 n_replay = 1
 
 #Task params.
-good_prob = 0.9
+good_prob = 0.8
 block_len = [20,21]
 
 # PFC model parameters.
 n_back = 30
 n_pfc = 16
-pfc_learning_rate = 0.005
+pfc_learning_rate = 0.01
 
 # Striatum model parameters.
-n_str = 12
+#n_str = 6
 str_learning_rate = 0.05
 
 #%% Instantiate task.
@@ -118,7 +119,10 @@ def pretrain_model(n_steps=100000, batch=100, fig_no=1):
 #%% Basal ganglia model
 
 str_inputs = layers.Input(shape=(task.n_states+n_pfc,))
-common = layers.Dense(n_str, activation="relu")(str_inputs)
+obs_inputs = str_inputs[:,:task.n_states]
+relu = layers.Dense(task.n_states, activation="relu")(str_inputs)
+common = keras.layers.add([obs_inputs, relu])
+
 actor = layers.Dense(task.n_actions, activation="softmax")(common)
 critic = layers.Dense(1)(common)
 
@@ -131,13 +135,14 @@ sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM
 
 # Helper functions.
 
-def store_trial_data(s, Sf, r, a):
+def store_trial_data(s, Sf, r, a, V):
     'Store state, reward and subseqent action for current timestep.'
     global states, state_f, rewards, actions
     states.append(s)
     state_f.append(Sf)
     rewards.append(r)
     actions.append(a)
+    values.append(V)
     pfc_input.append(pfc_input_buffer)
     
 # Run model.
@@ -158,8 +163,9 @@ for e in range(n_episodes):
     state_f = [] # State feature vectors.
     rewards = []
     actions = [] # int
+    values = []
     pfc_input = []
-    
+
     while True:
         step_n += 1
         
@@ -169,7 +175,7 @@ for e in range(n_episodes):
         a = np.random.choice(task.n_actions, p=np.squeeze(choice_probs))
         
         # Store history.
-        store_trial_data(s, Sf, r, a)
+        store_trial_data(s, Sf, r, a, V)
         
         # Update the PFC networks inputs.
         update_pfc_inputs(s,a)
@@ -184,12 +190,12 @@ for e in range(n_episodes):
         if n_trials == episode_len or step_n >= max_step_per_episode and s == 0:
             break # End of episode.  
             
-    episode_buffer.append((states, state_f, rewards, actions, pfc_input, n_trials))
+    episode_buffer.append((states, state_f, rewards, actions, values, pfc_input, n_trials))
 
     # Train networks.
     
     for episode in episode_buffer[-n_replay:]:
-        states, state_f, rewards, actions, pfc_input, n_trials = episode
+        states, state_f, rewards, actions, values, pfc_input, n_trials = episode
 
         # Update Striatum weights.
         
@@ -221,66 +227,7 @@ for e in range(n_episodes):
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
           f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
     
-#%% Analysis
-
-def plot_performance(last_n=100):
-    steps_per_trial = []
-    rewards_per_trial = []
-    for episode in episode_buffer:
-        states, state_f, rewards, actions, pfc_input, n_trials = episode
-        steps_per_trial.append(len(states)/n_trials)
-        rewards_per_trial.append(sum(rewards)/n_trials)
-    plt.figure()
-    plt.subplot(2,1,1)
-    plt.plot(steps_per_trial)
-    plt.axhline(3, c='k', ls=':')
-    plt.xlim(0,len(episode_buffer))
-    plt.ylabel('Steps per trial')
-    plt.subplot(2,1,2)
-    plt.plot(rewards_per_trial)
-    plt.axhline(0.5, c='k', ls='--')
-    cor_ch_rr = task.good_prob*task.common_prob+(1-task.good_prob)*(1-task.common_prob) # Reward rate if every choice is correct
-    plt.axhline(cor_ch_rr, c='k', ls=':')
-    plt.ylabel('Rewards per trial')
-    plt.xlabel('Episode #')
-    plt.yticks(np.arange(0.4,0.9,0.1))
-    plt.xlim(0,len(episode_buffer))
-    print(f'Ave. rewards per trial, last {last_n} episodes: {np.mean(rewards_per_trial[-last_n:]) :.2f}')
+    # an.plot_performance(episode_buffer, task, fig_no=1)
     
-def stay_probability_analysis(last_n=100):
-    stay_probs = []
-    for episode in episode_buffer[-last_n:]:
-        states, state_f, rewards, actions, pfc_input, n_trials = episode
-        choices, sec_steps, outcomes = [],[],[]
-        assert states[0] == ts.choice, 'first state of episode should be choice'
-        for s,a in zip(states, actions):
-            if s == ts.choice and a == ts.choose_A:
-                choices.append(1)
-            elif s == ts.choice and a == ts.choose_B:
-                choices.append(0)
-            elif s == ts.sec_step_A and a == ts.sec_step_A:
-                sec_steps.append(1)
-            elif s == ts.sec_step_B and a == ts.sec_step_B:
-                    sec_steps.append(0)
-            elif s in (ts.reward_A, ts.reward_B) and a == ts.initiate:
-                outcomes.append(1)
-            elif s == ts.initiate and a == ts.initiate:
-                outcomes.append(0)
-        assert len(choices) == len(sec_steps) == len(outcomes), 'something went wrong.'
-        choices = np.array(choices, bool)
-        sec_steps = np.array(sec_steps, bool)
-        transitions = choices == sec_steps
-        outcomes = np.array(outcomes, bool)
-        stays = choices[1:] == choices[:-1]
-        sp_comm_rew = np.mean(stays[ transitions[:-1] &  outcomes[:-1]])
-        sp_rare_rew = np.mean(stays[~transitions[:-1] &  outcomes[:-1]])
-        sp_comm_non = np.mean(stays[ transitions[:-1] & ~outcomes[:-1]])
-        sp_rare_non = np.mean(stays[~transitions[:-1] & ~outcomes[:-1]])
-        stay_probs.append(np.array([sp_comm_rew, sp_rare_rew, sp_comm_non, sp_rare_non]))
-    plt.figure()
-    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=np.std(stay_probs,0)/np.sqrt(last_n))
-    plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
-    plt.ylim(ymin=0)
-            
-        
+
     
