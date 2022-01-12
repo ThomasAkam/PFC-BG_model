@@ -1,5 +1,7 @@
 #%% Imports
 
+import os
+import pickle
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
@@ -135,19 +137,22 @@ for e in range(n_episodes):
             
     episode_buffer.append((states, rewards, actions, pfc_input, pfc_states, values, n_trials))
     
-    # Striatum weight update.
+    # Update striatum weights
 
     returns = np.zeros([len(rewards),1], dtype='float32')
     returns[-1] = V
     for i in range(1, len(returns)):
         returns[-i-1] = rewards[-i] + gamma*returns[-i]
             
-    with tf.GradientTape() as tape:
-        choice_probs, values = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
-        advantages = returns - values
-        # Critic loss.
+    with tf.GradientTape() as tape_c: # Calculate critic gradients.
+        _ , values = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
         critic_loss = sse_loss(values, returns)
-        # Actor loss
+        critic_grads = tape_c.gradient(critic_loss, Str_model.trainable_variables)
+        
+    advantages = returns - values
+
+    with tf.GradientTape() as tape_a: # Calculate actor gradients.
+        choice_probs, _ = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
         actor_losses = []
         for i,a in enumerate(actions):
             log_chosen_prob = tf.math.log(choice_probs[i,a])
@@ -155,17 +160,45 @@ for e in range(n_episodes):
             actor_losses.append(-log_chosen_prob*advantages[i]-entropy*entropy_loss_weight)
         actor_loss = tf.reduce_sum(actor_losses)
         # Apply combined loss.    
-        grads = tape.gradient(critic_loss+actor_loss, Str_model.trainable_variables)
-        str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
-            
-        # Update PFC weights
-        y  = one_hot(states, task.n_states)
-        tl = PFC_model.train_on_batch(np.array(pfc_input),y)
+        actor_grads = tape_a.gradient(actor_loss, Str_model.trainable_variables)
+        
+    combined_grads = []
+    for ag, cg in zip(actor_grads, critic_grads):
+        if ag is None:
+            combined_grads.append(cg)
+        elif cg is None:
+            combined_grads.append(ag)
+        else:
+            combined_grads.append(ag+cg)
+    
+    str_optimizer.apply_gradients(zip(combined_grads, Str_model.trainable_variables))
+         
+    # Update PFC weights
+    y  = one_hot(states, task.n_states)
+    tl = PFC_model.train_on_batch(np.array(pfc_input),y)
         
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
           f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
         
     # an.plot_performance(episode_buffer, task, fig_no=1)
     
+#%% Save / load data.
 
+data_dir = 'C:\\Users\\Thomas\\Dropbox\\Work\\Two-step DA photometry\\RNN model\\data\\experiment_1'
+
+def save_data(data_dir):
+    with open(os.path.join(data_dir, 'episodes.pkl'), 'wb') as f: 
+        pickle.dump(episode_buffer, f)
+    PFC_model.save(os.path.join(data_dir, 'PFC_model'))
+    Str_model.save(os.path.join(data_dir, 'Str_model'))
+    
+def load_data(data_dir):
+    with open(os.path.join(data_dir, 'episodes.pkl'), 'rb') as f: 
+        episode_buffer = pickle.load(f)
+    PFC_model = keras.models.load_model(os.path.join(data_dir, 'PFC_model'))
+    Str_model = keras.models.load_model(os.path.join(data_dir, 'Str_model'))
+    return episode_buffer, PFC_model, Str_model
+    
+    
+    
     
