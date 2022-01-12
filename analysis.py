@@ -3,19 +3,24 @@
 import numpy as np
 import pylab as plt
 from sklearn.decomposition import PCA
+from tensorflow import keras
 
 import Two_step_task as ts
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rc("axes.spines", top=False, right=False)
 
+one_hot = keras.utils.to_categorical
+
 #%% Analysis functions
 
 def plot_performance(episode_buffer, task, last_n=100, fig_no=1):
+    ''''Plot the evolution of the number of steps needed to complete each trial and the 
+    number of rewards per trial across training.'''
     steps_per_trial = []
     rewards_per_trial = []
     for episode in episode_buffer:
-        states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
+        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
         steps_per_trial.append(len(states)/n_trials)
         rewards_per_trial.append(sum(rewards)/n_trials)
     plt.figure(fig_no, clear=True)
@@ -33,10 +38,10 @@ def plot_performance(episode_buffer, task, last_n=100, fig_no=1):
     plt.xlabel('Episode #')
     plt.yticks(np.arange(0.4,0.9,0.1))
     plt.xlim(0,len(episode_buffer))
-    # print(f'Ave. rewards per trial, last {last_n} episodes: {np.mean(rewards_per_trial[-last_n:]) :.2f}')
     plt.show()
     
 def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
+    '''Standard two-step task stay probability analysis'''
     stay_probs = []
     for episode in episode_buffer[-last_n:]:
         choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
@@ -52,8 +57,10 @@ def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
     
-def _get_CSTO(episode, return_inds=False):
-    states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
+def _get_CSTO(episode):
+    '''Get the choices, second step states, transitions and outcomes for one episode as
+    a set of binary vectors.'''
+    states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
     choices, sec_steps, outcomes = [],[],[]
     assert states[0] == ts.choice, 'first state of episode should be choice'
     for s,a in zip(states, actions):
@@ -76,27 +83,43 @@ def _get_CSTO(episode, return_inds=False):
     outcomes = np.array(outcomes, bool)
     return choices, sec_steps, transitions, outcomes
     
-def sec_step_value_analysis(episode_buffer, gamma):
-    episode = episode_buffer[-1]
-    states, rewards, actions, pfc_input, pfc_activity, values, n_trials = episode
-    RPE = np.diff(np.squeeze(values))+rewards[1:]
-    sec_step_inds = np.where(np.isin(states, (ts.sec_step_A, ts.sec_step_B)))[0]
-    rew_ss_inds = np.where(np.array(rewards)[sec_step_inds[:-1]+1] == 1)
-    non_ss_inds = np.where(np.array(rewards)[sec_step_inds[:-1]+1] == 0)
-    
-    choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
-    sec_step_inds = np.where(np.isin(states, (ts.sec_step_A, ts.sec_step_B)))[0]
-    sec_step_inds = sec_step_inds[np.hstack([True,~(np.diff(sec_step_inds) == 1)])]
-    sec_step_values = np.squeeze(values)[sec_step_inds]
-    v_diffs = np.diff(sec_step_values)
-    
-    same_rew_difs = v_diffs[sec_steps]
+def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=1):
+    '''Plot the change in value of second-step states from one trial to the next as a function of the trial outcome
+    and whether the outcome occured in the same or different second-step state.'''
+    value_updates = np.zeros([last_n, 4])
+    for i,episode in enumerate(episode_buffer[-last_n:]):
+        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+        ssi = np.where(np.isin(states[1:], (ts.sec_step_A, ts.sec_step_B)) & # Indicies of second step states excluding repeated visits on a trial.
+                       np.equal(states[:-1], ts.choice))[0]+1 
+        # Get values of states sec step A and sec step B.
+        _, V_ssA = Str_model([one_hot(np.ones(len(ssi), int)*ts.sec_step_A, task.n_states), np.vstack(pfc_states)[ssi,:]])
+        _, V_ssB = Str_model([one_hot(np.ones(len(ssi), int)*ts.sec_step_B, task.n_states), np.vstack(pfc_states)[ssi,:]])
+        choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
+        dVA = np.diff(V_ssA.numpy().squeeze())
+        dVB = np.diff(V_ssB.numpy().squeeze())
+        rew_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) &  outcomes[:-1]],
+                                 dVB[(sec_steps[:-1] == 0) &  outcomes[:-1]]])
+        rew_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) &  outcomes[:-1]],
+                                 dVB[(sec_steps[:-1] == 1) &  outcomes[:-1]]])                         
+        non_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) & ~outcomes[:-1]],
+                                 dVB[(sec_steps[:-1] == 0) & ~outcomes[:-1]]])
+        non_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) & ~outcomes[:-1]],
+                                 dVB[(sec_steps[:-1] == 1) & ~outcomes[:-1]]])          
+        value_updates[i,:] = [np.mean(rew_same_dV), np.mean(rew_diff_dV), np.mean(non_same_dV), np.mean(non_diff_dV)]
+    plt.figure(fig_no, clear=True)
+    plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = np.std(value_updates,0), ls='none', marker='o')
+    plt.xticks(np.arange(4), ['Rew same', 'Rew diff', 'Non same', 'Non diff'])
+    plt.axhline(0,c='k',lw=0.5)
+    plt.ylabel('Change in state value')
+    plt.xlabel('Trial outcome')
+ 
     
 def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=3):
+    '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_features = []
     for episode in episode_buffer[-last_n:]:
-        states, state_f, rewards, actions, values, pfc_input, n_trials = episode
-        ch_state_PFC_features.append(np.array(state_f)[np.array(states)==ts.choice,task.n_states:])
+        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+        ch_state_PFC_features.append(np.array(pfc_states)[np.array(states)==ts.choice].squeeze())
     ch_state_PFC_features = np.vstack(ch_state_PFC_features) 
     PC1 = PCA(n_components=1).fit(ch_state_PFC_features).transform(ch_state_PFC_features)
     plt.figure(fig_no, clear=True)
@@ -104,8 +127,3 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=3):
     plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
-
-
-    
-            
-        
