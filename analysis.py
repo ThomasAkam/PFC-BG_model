@@ -29,24 +29,36 @@ def plot_performance(episode_buffer, task, fig_no=1):
     number of rewards per trial across training.'''
     steps_per_trial = []
     rewards_per_trial = []
+    bias = []
+    PFC_outcome_pred_prob = []
     for episode in episode_buffer:
-        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
         steps_per_trial.append(len(states)/n_trials)
         rewards_per_trial.append(sum(rewards)/n_trials)
+        n_A_choices = np.sum((np.array(states) == ts.choice) & (np.array(actions) == ts.choose_A))
+        n_B_choices = np.sum((np.array(states) == ts.choice) & (np.array(actions) == ts.choose_B))
+        bias.append(n_A_choices/(n_A_choices+n_B_choices))
+        PFC_outcome_pred_prob.append(np.mean((pred_states == np.array(states))[
+            np.isin(states,[ts.reward_A, ts.reward_B, ts.initiate])]))
     plt.figure(fig_no, clear=True)
-    plt.subplot(2,1,1)
+    plt.subplot(3,1,1)
     plt.plot(steps_per_trial)
     plt.axhline(3, c='k', ls=':')
     plt.xlim(0,len(episode_buffer))
     plt.ylabel('Steps per trial')
-    plt.subplot(2,1,2)
+    plt.subplot(3,1,2)
     plt.plot(rewards_per_trial)
+    plt.plot(PFC_outcome_pred_prob)
     plt.axhline(0.5, c='k', ls='--')
     cor_ch_rr = task.good_prob*task.common_prob+(1-task.good_prob)*(1-task.common_prob) # Reward rate if every choice is correct
     plt.axhline(cor_ch_rr, c='k', ls=':')
     plt.ylabel('Rewards per trial')
-    plt.xlabel('Episode #')
     plt.yticks(np.arange(0.4,0.9,0.1))
+    plt.xlim(0,len(episode_buffer))
+    plt.subplot(3,1,3)
+    plt.plot(bias)
+    plt.ylabel('Bias')
+    plt.xlabel('Episode #')
     plt.xlim(0,len(episode_buffer))
     plt.show()
     
@@ -70,7 +82,7 @@ def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
 def _get_CSTO(episode):
     '''Get the choices, second step states, transitions and outcomes for one episode as
     a set of binary vectors.'''
-    states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
     choices, sec_steps, outcomes = [],[],[]
     assert states[0] == ts.choice, 'first state of episode should be choice'
     for s,a in zip(states, actions):
@@ -98,7 +110,7 @@ def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3
     and whether the outcome occured in the same or different second-step state.'''
     value_updates = np.zeros([last_n, 4])
     for i,episode in enumerate(episode_buffer[-last_n:]):
-        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
         ssi = np.where(np.isin(states[1:], (ts.sec_step_A, ts.sec_step_B)) & # Indicies of second step states excluding repeated visits on a trial.
                        np.equal(states[:-1], ts.choice))[0]+1 
         # Get values of states sec step A and sec step B.
@@ -128,7 +140,7 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_features = []
     for episode in episode_buffer[-last_n:]:
-        states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
+        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
         ch_state_PFC_features.append(np.array(pfc_states)[np.array(states)==ts.choice].squeeze())
     ch_state_PFC_features = np.vstack(ch_state_PFC_features) 
     PC1 = PCA(n_components=1).fit(ch_state_PFC_features).transform(ch_state_PFC_features)

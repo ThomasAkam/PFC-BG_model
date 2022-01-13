@@ -20,7 +20,7 @@ n_episodes = 500
 episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
-entropy_loss_weight = 0.01
+entropy_loss_weight = 0.05
 
 #Task params.
 good_prob = 0.9
@@ -131,7 +131,10 @@ for e in range(n_episodes):
         if n_trials == episode_len or step_n >= max_step_per_episode and s == 0:
             break # End of episode.  
             
-    episode_buffer.append((states, rewards, actions, pfc_input, pfc_states, values, n_trials))
+    # Store episode data.
+    
+    pred_states = np.argmax(PFC_model.predict(np.array(pfc_input)),1) # Used only for analysis.
+    episode_buffer.append((states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials))
     
     # Update striatum weights
     
@@ -150,8 +153,9 @@ for e in range(n_episodes):
         log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
         entropy = -tf.reduce_sum(choice_probs_g*tf.math.log(choice_probs_g),1)
         actor_loss = tf.reduce_sum(-log_chosen_probs*advantages-entropy*entropy_loss_weight)
+        # Apply gradients
         grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
-    
+
     str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
          
     # Update PFC 
@@ -161,7 +165,9 @@ for e in range(n_episodes):
         
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
           f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
-
+    
+    if e % 10 == 9:
+        an.plot_performance(episode_buffer, task)
 
 # Plotting at end of run.
         
