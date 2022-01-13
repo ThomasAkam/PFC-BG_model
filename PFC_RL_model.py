@@ -11,6 +11,7 @@ import Two_step_task as ts
 import analysis as an
 
 one_hot = keras.utils.to_categorical
+sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
 #%% Parameters.
 
@@ -22,7 +23,7 @@ max_step_per_episode = 600
 entropy_loss_weight = 0.01
 
 #Task params.
-good_prob = 0.8
+good_prob = 0.9
 block_len = [20,21]
 
 # PFC model parameters.
@@ -45,8 +46,7 @@ state_pred = layers.Dense(task.n_states, activation='softmax', name='state_pred'
 PFC_model = keras.Model(inputs=state_action, outputs=state_pred)
 pfc_optimizer = keras.optimizers.Adam(learning_rate=pfc_learning_rate)
 PFC_model.compile(loss="categorical_crossentropy", optimizer=pfc_optimizer)
-# Model variant used to get state of RNN layer.
-Get_pfc_state = keras.Model(inputs=PFC_model.input,
+Get_pfc_state = keras.Model(inputs=PFC_model.input, # Model variant used to get state of RNN layer.
                              outputs=PFC_model.get_layer('rnn').output)
 
 pfc_input_buffer = np.zeros([n_back, task.n_states+task.n_actions])
@@ -74,10 +74,6 @@ Str_model = keras.Model(inputs=[obs_state, pfc_state], outputs=[actor, critic])
 str_optimizer = keras.optimizers.Adam(learning_rate=str_learning_rate)
 
 #%% Environment loop.
-
-sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
-
-# Helper functions.
 
 def store_trial_data(s, r, a, pfc_a, V):
     'Store state, reward and subseqent action, PFC input buffer, PFC activity, value.'
@@ -138,49 +134,38 @@ for e in range(n_episodes):
     episode_buffer.append((states, rewards, actions, pfc_input, pfc_states, values, n_trials))
     
     # Update striatum weights
-
+    
     returns = np.zeros([len(rewards),1], dtype='float32')
     returns[-1] = V
     for i in range(1, len(returns)):
         returns[-i-1] = rewards[-i] + gamma*returns[-i]
-            
-    with tf.GradientTape() as tape_c: # Calculate critic gradients.
-        _ , values = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
-        critic_loss = sse_loss(values, returns)
-        critic_grads = tape_c.gradient(critic_loss, Str_model.trainable_variables)
-        
-    advantages = returns - values
-
-    with tf.GradientTape() as tape_a: # Calculate actor gradients.
-        choice_probs, _ = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
-        actor_losses = []
-        for i,a in enumerate(actions):
-            log_chosen_prob = tf.math.log(choice_probs[i,a])
-            entropy = -tf.reduce_sum(choice_probs[i,:]*tf.math.log(choice_probs[i,:]))
-            actor_losses.append(-log_chosen_prob*advantages[i]-entropy*entropy_loss_weight)
-        actor_loss = tf.reduce_sum(actor_losses)
-        # Apply combined loss.    
-        actor_grads = tape_a.gradient(actor_loss, Str_model.trainable_variables)
-        
-    combined_grads = []
-    for ag, cg in zip(actor_grads, critic_grads):
-        if ag is None:
-            combined_grads.append(cg)
-        elif cg is None:
-            combined_grads.append(ag)
-        else:
-            combined_grads.append(ag+cg)
+             
+    advantages = (returns - np.vstack(values)).squeeze()
+          
+    with tf.GradientTape() as tape: # Calculate critic gradients.
+        # Critic loss.
+        choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)]) # Gradient of these is tracked wrt Str_model weights.
+        critic_loss = sse_loss(values_g, returns)
+        # Actor loss.
+        log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
+        entropy = -tf.reduce_sum(choice_probs_g*tf.math.log(choice_probs_g),1)
+        actor_loss = tf.reduce_sum(-log_chosen_probs*advantages-entropy*entropy_loss_weight)
+        grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
     
-    str_optimizer.apply_gradients(zip(combined_grads, Str_model.trainable_variables))
+    str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
          
-    # Update PFC weights
+    # Update PFC 
+    
     y  = one_hot(states, task.n_states)
     tl = PFC_model.train_on_batch(np.array(pfc_input),y)
         
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
           f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
+
+
+# Plotting at end of run.
         
-    # an.plot_performance(episode_buffer, task, fig_no=1)
+an.make_plots(episode_buffer, task, Str_model)
     
 #%% Save / load data.
 
@@ -198,7 +183,4 @@ def load_data(data_dir):
     PFC_model = keras.models.load_model(os.path.join(data_dir, 'PFC_model'))
     Str_model = keras.models.load_model(os.path.join(data_dir, 'Str_model'))
     return episode_buffer, PFC_model, Str_model
-    
-    
-    
     

@@ -12,9 +12,19 @@ plt.rc("axes.spines", top=False, right=False)
 
 one_hot = keras.utils.to_categorical
 
+
 #%% Analysis functions
 
-def plot_performance(episode_buffer, task, last_n=100, fig_no=1):
+def make_plots(episode_buffer, task, Str_model):
+    '''Run all plotting functions'''
+    plot_performance(episode_buffer, task)
+    stay_probability_analysis(episode_buffer)
+    sec_step_value_analysis(episode_buffer, Str_model, task)
+    plot_PFC_PC1(episode_buffer, task)
+
+#%% Analysis functions
+
+def plot_performance(episode_buffer, task, fig_no=1):
     ''''Plot the evolution of the number of steps needed to complete each trial and the 
     number of rewards per trial across training.'''
     steps_per_trial = []
@@ -83,7 +93,7 @@ def _get_CSTO(episode):
     outcomes = np.array(outcomes, bool)
     return choices, sec_steps, transitions, outcomes
     
-def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=1):
+def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3):
     '''Plot the change in value of second-step states from one trial to the next as a function of the trial outcome
     and whether the outcome occured in the same or different second-step state.'''
     value_updates = np.zeros([last_n, 4])
@@ -114,7 +124,7 @@ def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=1
     plt.xlabel('Trial outcome')
  
     
-def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=3):
+def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_features = []
     for episode in episode_buffer[-last_n:]:
