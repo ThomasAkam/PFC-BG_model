@@ -23,7 +23,7 @@ max_step_per_episode = 600
 entropy_loss_weight = 0.05
 
 #Task params.
-good_prob = 0.9
+good_prob = 0.8
 block_len = [20,21]
 
 # PFC model parameters.
@@ -65,7 +65,8 @@ obs_state = layers.Input(shape=(task.n_states,)) # Observable state features.
 pfc_state = layers.Input(shape=(n_pfc,))         # PFC activity features.
 combined_features = keras.layers.Concatenate(axis=1)([obs_state, pfc_state])
 relu = layers.Dense(task.n_states, activation="relu")(combined_features)
-common = keras.layers.add([obs_state, relu]) # Add residual connections from observable features to output of relu layer.
+#common = keras.layers.add([obs_state, relu]) # Add residual connections from observable features to output of relu layer.
+common = keras.layers.Concatenate(axis=1)([obs_state, relu])
 
 actor = layers.Dense(task.n_actions, activation="softmax")(common)
 critic = layers.Dense(1)(common)
@@ -145,7 +146,7 @@ for e in range(n_episodes):
              
     advantages = (returns - np.vstack(values)).squeeze()
           
-    with tf.GradientTape() as tape: # Calculate critic gradients.
+    with tf.GradientTape() as tape: # Calculate gradients
         # Critic loss.
         choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)]) # Gradient of these is tracked wrt Str_model weights.
         critic_loss = sse_loss(values_g, returns)
@@ -171,11 +172,11 @@ for e in range(n_episodes):
 
 # Plotting at end of run.
         
-an.make_plots(episode_buffer, task, Str_model)
+# an.make_plots(episode_buffer, task, Str_model)
     
 #%% Save / load data.
 
-data_dir = 'C:\\Users\\Thomas\\Dropbox\\Work\\Two-step DA photometry\\RNN model\\data\\experiment_1'
+data_dir = 'C:\\Users\\Thomas\\Dropbox\\Work\\Two-step DA photometry\\RNN model\\data\\experiment_08'
 
 def save_data(data_dir):
     with open(os.path.join(data_dir, 'episodes.pkl'), 'wb') as f: 

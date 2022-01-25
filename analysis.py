@@ -2,8 +2,10 @@
 
 import numpy as np
 import pylab as plt
+import tensorflow as tf
 from sklearn.decomposition import PCA
 from tensorflow import keras
+from functools import partial
 
 import Two_step_task as ts
 
@@ -11,6 +13,7 @@ plt.rcParams['pdf.fonttype'] = 42
 plt.rc("axes.spines", top=False, right=False)
 
 one_hot = keras.utils.to_categorical
+sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
 
 #%% Analysis functions
@@ -141,6 +144,7 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     ch_state_PFC_features = []
     for episode in episode_buffer[-last_n:]:
         states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
+        #states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
         ch_state_PFC_features.append(np.array(pfc_states)[np.array(states)==ts.choice].squeeze())
     ch_state_PFC_features = np.vstack(ch_state_PFC_features) 
     PC1 = PCA(n_components=1).fit(ch_state_PFC_features).transform(ch_state_PFC_features)
@@ -149,3 +153,117 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
+    
+def sim_opto(episode_buffer, Str_model, task, last_n=10):
+    stay_probs_cs = np.zeros([last_n, 4])
+    stay_probs_os = np.zeros([last_n, 4])
+    for i, episode in enumerate(episode_buffer[-last_n:]):
+        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
+        choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
+        states, actions = np.array(states), np.array(actions)
+        # Get indices of different choice states defined by A/B choice and subsequent common/rare transition.
+        A_comm_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_A) & (states[1:] == ts.sec_step_A))[0]
+        A_rare_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_A) & (states[1:] == ts.sec_step_B))[0]
+        B_comm_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_B) & (states[1:] == ts.sec_step_B))[0]
+        B_rare_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_B) & (states[1:] == ts.sec_step_A))[0]    
+        all_ch_inds = np.where((states[:-1] == ts.choice) & np.isin(states[1:], [ts.sec_step_A, ts.sec_step_B]))[0]
+        
+        ocp = partial(_opto_choice_probs, Str_model, all_ch_inds, episode, task)
+        
+        # Caclulate choice stim stay probabilities.
+        A_comm_nons_cp_0, A_comm_stim_cp_0 = ocp(A_comm_ch_inds[0:-1:2])
+        A_comm_nons_cp_1, A_comm_stim_cp_1 = ocp(A_comm_ch_inds[1:-1:2])
+        A_rare_nons_cp_0, A_rare_stim_cp_0 = ocp(A_rare_ch_inds[0:-1:2])
+        A_rare_nons_cp_1, A_rare_stim_cp_1 = ocp(A_rare_ch_inds[1:-1:2])
+        B_comm_nons_cp_0, B_comm_stim_cp_0 = ocp(B_comm_ch_inds[0:-1:2])
+        B_comm_nons_cp_1, B_comm_stim_cp_1 = ocp(B_comm_ch_inds[1:-1:2])
+        B_rare_nons_cp_0, B_rare_stim_cp_0 = ocp(B_rare_ch_inds[0:-1:2])
+        B_rare_nons_cp_1, B_rare_stim_cp_1 = ocp(B_rare_ch_inds[1:-1:2])
+    
+        sp_comm_stim = np.mean(np.concatenate([
+             np.vstack([A_comm_stim_cp_0, A_comm_stim_cp_1])[:,ts.choose_A],
+             np.vstack([B_comm_stim_cp_0, B_comm_stim_cp_1])[:,ts.choose_B]]))
+        sp_comm_nons = np.mean(np.concatenate([
+             np.vstack([A_comm_nons_cp_0, A_comm_nons_cp_1])[:,ts.choose_A],
+             np.vstack([B_comm_nons_cp_0, B_comm_nons_cp_1])[:,ts.choose_B]]))
+        sp_rare_stim = np.mean(np.concatenate([
+             np.vstack([A_rare_stim_cp_0, A_rare_stim_cp_1])[:,ts.choose_A],
+             np.vstack([B_rare_stim_cp_0, B_rare_stim_cp_1])[:,ts.choose_B]]))
+        sp_rare_nons = np.mean(np.concatenate([
+             np.vstack([A_rare_nons_cp_0, A_rare_nons_cp_1])[:,ts.choose_A],
+             np.vstack([B_rare_nons_cp_0, B_rare_nons_cp_1])[:,ts.choose_B]]))   
+        
+        stay_probs_cs[i,:] = [sp_comm_stim, sp_rare_stim, sp_comm_nons, sp_rare_nons]
+        
+        # Caclulate outcome stim stay probabilities.
+        A_comm_nons_cp_0, A_comm_stim_cp_0 = ocp(A_comm_ch_inds[0:-1:2]+1)
+        A_comm_nons_cp_1, A_comm_stim_cp_1 = ocp(A_comm_ch_inds[1:-1:2]+1)
+        A_rare_nons_cp_0, A_rare_stim_cp_0 = ocp(A_rare_ch_inds[0:-1:2]+1)
+        A_rare_nons_cp_1, A_rare_stim_cp_1 = ocp(A_rare_ch_inds[1:-1:2]+1)
+        B_comm_nons_cp_0, B_comm_stim_cp_0 = ocp(B_comm_ch_inds[0:-1:2]+1)
+        B_comm_nons_cp_1, B_comm_stim_cp_1 = ocp(B_comm_ch_inds[1:-1:2]+1)
+        B_rare_nons_cp_0, B_rare_stim_cp_0 = ocp(B_rare_ch_inds[0:-1:2]+1)
+        B_rare_nons_cp_1, B_rare_stim_cp_1 = ocp(B_rare_ch_inds[1:-1:2]+1)
+    
+        sp_comm_stim = np.mean(np.concatenate([
+             np.vstack([A_comm_stim_cp_0, A_comm_stim_cp_1])[:,ts.choose_A],
+             np.vstack([B_comm_stim_cp_0, B_comm_stim_cp_1])[:,ts.choose_B]]))
+        sp_comm_nons = np.mean(np.concatenate([
+             np.vstack([A_comm_nons_cp_0, A_comm_nons_cp_1])[:,ts.choose_A],
+             np.vstack([B_comm_nons_cp_0, B_comm_nons_cp_1])[:,ts.choose_B]]))
+        sp_rare_stim = np.mean(np.concatenate([
+             np.vstack([A_rare_stim_cp_0, A_rare_stim_cp_1])[:,ts.choose_A],
+             np.vstack([B_rare_stim_cp_0, B_rare_stim_cp_1])[:,ts.choose_B]]))
+        sp_rare_nons = np.mean(np.concatenate([
+             np.vstack([A_rare_nons_cp_0, A_rare_nons_cp_1])[:,ts.choose_A],
+             np.vstack([B_rare_nons_cp_0, B_rare_nons_cp_1])[:,ts.choose_B]]))   
+        
+        stay_probs_os[i,:] = [sp_comm_stim, sp_rare_stim, sp_comm_nons, sp_rare_nons]
+    
+    plt.figure(1, clear=True)
+    plt.subplot(1,2,1)
+    plt.bar(np.arange(4), np.mean(stay_probs_cs,0), yerr=np.std(stay_probs_cs,0))
+    plt.xticks(np.arange(4),['Com. stim', 'Rare stim', 'Com. nons', 'Rare nons'], rotation=-45)
+    plt.ylim(0,1)
+    plt.subplot(1,2,2)
+    plt.bar(np.arange(4), np.mean(stay_probs_os,0), yerr=np.std(stay_probs_os,0))
+    plt.xticks(np.arange(4),['Com. stim', 'Rare stim', 'Com. nons', 'Rare nons'], rotation=-45)  
+    plt.ylim(0,1)
+    
+def _opto_choice_probs(Str_model, all_ch_inds, episode, task, stim_inds):
+    '''Evalute how training the striatum model using gradients due to artificially evoked opto RPE
+    affects choice probabilities on the subseqeunt choice states.''' 
+    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
+    orig_weights = Str_model.get_weights()
+    
+    # Update model weights.
+    opto_stim = np.zeros(len(states))
+    opto_stim[stim_inds] = 1
+    
+    SGD_optimiser = keras.optimizers.SGD(learning_rate=0.01)
+    
+    with tf.GradientTape() as tape:
+        # Critic loss.
+        choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)]) # Gradient of these is tracked wrt Str_model weights.
+        critic_loss = sse_loss(values_g, tf.stop_gradient(values_g)+opto_stim)*(100/np.sum(opto_stim))
+        # Actor loss.
+        log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
+        actor_loss = tf.reduce_sum(-log_chosen_probs*opto_stim)*(100/np.sum(opto_stim))
+        # Apply gradients
+        grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
+
+    SGD_optimiser.apply_gradients(zip(grads, Str_model.trainable_variables))
+    choice_probs_stim, _ = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
+    
+    # Evaluate choice probabilities on the next choice states following stim states.
+    eval_inds = all_ch_inds[np.searchsorted(all_ch_inds, stim_inds+1)] # Where to evaluate choice probabilities.
+    assert np.intersect1d(stim_inds, eval_inds).size == 0, 'Overlaping stim and evaluation trials'
+    
+    ch_probs_nons  = tf.gather(choice_probs_g, eval_inds).numpy()
+    ch_probs_stim = tf.gather(choice_probs_stim, eval_inds).numpy()
+    
+    Str_model.set_weights(orig_weights) # Reset model weights.
+    
+    return ch_probs_nons, ch_probs_stim
+    
+ 
