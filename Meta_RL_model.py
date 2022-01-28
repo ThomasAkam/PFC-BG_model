@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from collections import namedtuple
 
 import Two_step_task as ts
 import analysis as an
@@ -13,14 +14,16 @@ import analysis as an
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
+Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_input', 'pfc_states', 'values', 'pred_states', 'n_trials'])
+
 #%% Parameters.
 
 # Simulation parameters.
-n_episodes = 1000
+n_episodes = 500
 episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
-entropy_loss_weight = 0.03
+entropy_loss_weight = 0.05
 
 #Task params.
 good_prob = 0.9
@@ -112,7 +115,8 @@ for e in range(n_episodes):
             
     # Store episode data.
     
-    episode_buffer.append((states, rewards, actions, rnn_input, rnn_states, values, n_trials))
+    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(rnn_input), 
+                           np.vstack(rnn_states), np.vstack(values), None, n_trials))
     
     # Update weights
     
@@ -139,8 +143,7 @@ for e in range(n_episodes):
         
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} Rew. per tr.: {np.sum(rewards)/n_trials :.2f}')
     
-    #if e % 10 == 9:
-    #    an.plot_performance(episode_buffer, task)
+    if e % 10 == 9: an.plot_performance(episode_buffer, task)
 
 # Plotting at end of run.
         

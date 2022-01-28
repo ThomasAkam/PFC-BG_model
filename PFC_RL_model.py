@@ -6,12 +6,15 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.keras import layers
+from collections import namedtuple
 
 import Two_step_task as ts
 import analysis as an
 
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
+
+Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_input', 'pfc_states', 'values', 'pred_states', 'n_trials'])
 
 #%% Parameters.
 
@@ -92,7 +95,6 @@ s = task.reset() # Get initial state as integer.
 r = 0
 pfc_a = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:])
 
-
 episode_buffer = []
 
 for e in range(n_episodes):
@@ -135,7 +137,8 @@ for e in range(n_episodes):
     # Store episode data.
     
     pred_states = np.argmax(PFC_model.predict(np.array(pfc_input)),1) # Used only for analysis.
-    episode_buffer.append((states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials))
+    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_input), 
+                           np.vstack(pfc_states), np.vstack(values), np.array(pred_states), n_trials))
     
     # Update striatum weights
     
@@ -148,7 +151,7 @@ for e in range(n_episodes):
           
     with tf.GradientTape() as tape: # Calculate gradients
         # Critic loss.
-        choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)]) # Gradient of these is tracked wrt Str_model weights.
+        choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), np.vstack(pfc_states)]) # Gradient of these is tracked wrt Str_model weights.
         critic_loss = sse_loss(values_g, returns)
         # Actor loss.
         log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
@@ -161,14 +164,12 @@ for e in range(n_episodes):
          
     # Update PFC 
     
-    y  = one_hot(states, task.n_states)
-    tl = PFC_model.train_on_batch(np.array(pfc_input),y)
+    tl = PFC_model.train_on_batch(np.array(pfc_input), one_hot(states, task.n_states))
         
     print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
           f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
     
-    if e % 10 == 9:
-        an.plot_performance(episode_buffer, task)
+    if e % 10 == 9: an.plot_performance(episode_buffer, task)
 
 # Plotting at end of run.
         
@@ -176,9 +177,11 @@ for e in range(n_episodes):
     
 #%% Save / load data.
 
-data_dir = 'C:\\Users\\Thomas\\Dropbox\\Work\\Two-step DA photometry\\RNN model\\data\\experiment_08'
+data_dir = 'C:\\Users\\Thomas\\Dropbox\\Work\\Two-step DA photometry\\RNN model\\data\\experiment_09'
 
 def save_data(data_dir):
+    if not os.path.exists(data_dir):
+        os.mkdir(data_dir)
     with open(os.path.join(data_dir, 'episodes.pkl'), 'wb') as f: 
         pickle.dump(episode_buffer, f)
     PFC_model.save(os.path.join(data_dir, 'PFC_model'))

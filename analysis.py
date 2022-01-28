@@ -34,15 +34,15 @@ def plot_performance(episode_buffer, task, fig_no=1):
     rewards_per_trial = []
     bias = []
     PFC_outcome_pred_prob = []
-    for episode in episode_buffer:
-        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-        steps_per_trial.append(len(states)/n_trials)
-        rewards_per_trial.append(sum(rewards)/n_trials)
-        n_A_choices = np.sum((np.array(states) == ts.choice) & (np.array(actions) == ts.choose_A))
-        n_B_choices = np.sum((np.array(states) == ts.choice) & (np.array(actions) == ts.choose_B))
+    for ep in episode_buffer:
+        steps_per_trial.append(len(ep.states)/ep.n_trials)
+        rewards_per_trial.append(sum(ep.rewards)/ep.n_trials)
+        n_A_choices = np.sum((ep.states == ts.choice) & (ep.actions == ts.choose_A))
+        n_B_choices = np.sum((ep.states == ts.choice) & (ep.actions == ts.choose_B))
         bias.append(n_A_choices/(n_A_choices+n_B_choices))
-        PFC_outcome_pred_prob.append(np.mean((pred_states == np.array(states))[
-            np.isin(states,[ts.reward_A, ts.reward_B, ts.initiate])]))
+        if ep.pred_states is not None:
+            PFC_outcome_pred_prob.append(np.mean((ep.pred_states == ep.states)[
+                np.isin(ep.states,[ts.reward_A, ts.reward_B, ts.initiate])]))
     plt.figure(fig_no, clear=True)
     plt.subplot(3,1,1)
     plt.plot(steps_per_trial)
@@ -51,7 +51,7 @@ def plot_performance(episode_buffer, task, fig_no=1):
     plt.ylabel('Steps per trial')
     plt.subplot(3,1,2)
     plt.plot(rewards_per_trial)
-    plt.plot(PFC_outcome_pred_prob)
+    if ep.pred_states is not None:plt.plot(PFC_outcome_pred_prob)
     plt.axhline(0.5, c='k', ls='--')
     cor_ch_rr = task.good_prob*task.common_prob+(1-task.good_prob)*(1-task.common_prob) # Reward rate if every choice is correct
     plt.axhline(cor_ch_rr, c='k', ls=':')
@@ -68,8 +68,8 @@ def plot_performance(episode_buffer, task, fig_no=1):
 def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
     '''Standard two-step task stay probability analysis'''
     stay_probs = []
-    for episode in episode_buffer[-last_n:]:
-        choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
+    for ep in episode_buffer[-last_n:]:
+        choices, sec_steps, transitions, outcomes = _get_CSTO(ep)
         stays = choices[1:] == choices[:-1]
         sp_comm_rew = np.mean(stays[ transitions[:-1] &  outcomes[:-1]])
         sp_rare_rew = np.mean(stays[~transitions[:-1] &  outcomes[:-1]])
@@ -82,44 +82,54 @@ def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
     
-def _get_CSTO(episode):
+def _get_CSTO(ep, return_inds=False):
     '''Get the choices, second step states, transitions and outcomes for one episode as
     a set of binary vectors.'''
-    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-    choices, sec_steps, outcomes = [],[],[]
-    assert states[0] == ts.choice, 'first state of episode should be choice'
-    for s,a in zip(states, actions):
-        if s == ts.choice and a == ts.choose_A:
-            choices.append(1)
-        elif s == ts.choice and a == ts.choose_B:
-            choices.append(0)
-        elif s == ts.sec_step_A and a == ts.sec_step_A:
+    choices, sec_steps, outcomes, ch_inds, ss_inds, oc_inds = [],[],[],[],[],[]
+    first_choice_ind = np.where(ep.states==ts.choice)[0][0]
+    last_outcome_ind = np.where(np.isin(ep.states, [ts.reward_A, ts.reward_B, ts.initiate]) & (ep.actions == ts.initiate))[0][-1]
+    for i, (s,a) in enumerate(zip(ep.states, ep.actions)):
+        if i < first_choice_ind:
+            continue
+        elif s == ts.choice and a in (ts.choose_A, ts.choose_B):
+            if a == ts.choose_A:
+                choices.append(1)
+            else:
+                choices.append(0)
+            ch_inds.append(i)
+        elif s == ts.sec_step_A and a == ts.sec_step_A: 
             sec_steps.append(1)
-        elif s == ts.sec_step_B and a == ts.sec_step_B:
-                sec_steps.append(0)
-        elif s in (ts.reward_A, ts.reward_B) and a == ts.initiate:
-            outcomes.append(1)
-        elif s == ts.initiate and a == ts.initiate:
-            outcomes.append(0)
-    assert len(choices) == len(sec_steps) == len(outcomes), 'something went wrong.'
+            ss_inds.append(i)
+        elif s == ts.sec_step_B and a == ts.sec_step_B: 
+            sec_steps.append(0)
+            ss_inds.append(i)
+        elif s in (ts.reward_A, ts.reward_B, ts.initiate) and a == ts.initiate: 
+            if s == ts.initiate:
+                outcomes.append(0)
+            else:
+                outcomes.append(1)
+            oc_inds.append(i)
+            if i == last_outcome_ind:
+                break
     choices = np.array(choices, bool)
     sec_steps = np.array(sec_steps, bool)
     transitions = choices == sec_steps
     outcomes = np.array(outcomes, bool)
-    return choices, sec_steps, transitions, outcomes
+    if return_inds:
+        return choices, sec_steps, transitions, outcomes, np.array(ch_inds), np.array(ss_inds), np.array(oc_inds)
+    else:
+        return choices, sec_steps, transitions, outcomes
     
 def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3):
     '''Plot the change in value of second-step states from one trial to the next as a function of the trial outcome
     and whether the outcome occured in the same or different second-step state.'''
     value_updates = np.zeros([last_n, 4])
-    for i,episode in enumerate(episode_buffer[-last_n:]):
-        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-        ssi = np.where(np.isin(states[1:], (ts.sec_step_A, ts.sec_step_B)) & # Indicies of second step states excluding repeated visits on a trial.
-                       np.equal(states[:-1], ts.choice))[0]+1 
+    for i,ep in enumerate(episode_buffer[-last_n:]):
+        _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
         # Get values of states sec step A and sec step B.
-        _, V_ssA = Str_model([one_hot(np.ones(len(ssi), int)*ts.sec_step_A, task.n_states), np.vstack(pfc_states)[ssi,:]])
-        _, V_ssB = Str_model([one_hot(np.ones(len(ssi), int)*ts.sec_step_B, task.n_states), np.vstack(pfc_states)[ssi,:]])
-        choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
+        _, V_ssA = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states), np.vstack(ep.pfc_states)[ss_inds,:]])
+        _, V_ssB = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states), np.vstack(ep.pfc_states)[ss_inds,:]])
+    
         dVA = np.diff(V_ssA.numpy().squeeze())
         dVB = np.diff(V_ssB.numpy().squeeze())
         rew_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) &  outcomes[:-1]],
@@ -142,10 +152,8 @@ def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3
 def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_features = []
-    for episode in episode_buffer[-last_n:]:
-        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-        #states, rewards, actions, pfc_input, pfc_states, values, n_trials = episode
-        ch_state_PFC_features.append(np.array(pfc_states)[np.array(states)==ts.choice].squeeze())
+    for ep in episode_buffer[-last_n:]:
+        ch_state_PFC_features.append(ep.pfc_states[ep.states==ts.choice])
     ch_state_PFC_features = np.vstack(ch_state_PFC_features) 
     PC1 = PCA(n_components=1).fit(ch_state_PFC_features).transform(ch_state_PFC_features)
     plt.figure(fig_no, clear=True)
@@ -154,21 +162,19 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
     
+    
 def sim_opto(episode_buffer, Str_model, task, last_n=10):
     stay_probs_cs = np.zeros([last_n, 4])
     stay_probs_os = np.zeros([last_n, 4])
-    for i, episode in enumerate(episode_buffer[-last_n:]):
-        states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-        choices, sec_steps, transitions, outcomes = _get_CSTO(episode)
-        states, actions = np.array(states), np.array(actions)
+    for i, ep in enumerate(episode_buffer[-last_n:]):
+        choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
         # Get indices of different choice states defined by A/B choice and subsequent common/rare transition.
-        A_comm_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_A) & (states[1:] == ts.sec_step_A))[0]
-        A_rare_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_A) & (states[1:] == ts.sec_step_B))[0]
-        B_comm_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_B) & (states[1:] == ts.sec_step_B))[0]
-        B_rare_ch_inds = np.where((states[:-1] == ts.choice) & (actions[:-1] == ts.choose_B) & (states[1:] == ts.sec_step_A))[0]    
-        all_ch_inds = np.where((states[:-1] == ts.choice) & np.isin(states[1:], [ts.sec_step_A, ts.sec_step_B]))[0]
-        
-        ocp = partial(_opto_choice_probs, Str_model, all_ch_inds, episode, task)
+        A_comm_ch_inds = ch_inds[ choices &  transitions]
+        A_rare_ch_inds = ch_inds[ choices & ~transitions]
+        B_comm_ch_inds = ch_inds[~choices &  transitions]
+        B_rare_ch_inds = ch_inds[~choices & ~transitions]
+
+        ocp = partial(_opto_choice_probs, Str_model, ch_inds, ep, task)
         
         # Caclulate choice stim stay probabilities.
         A_comm_nons_cp_0, A_comm_stim_cp_0 = ocp(A_comm_ch_inds[0:-1:2])
