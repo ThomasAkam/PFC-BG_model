@@ -67,3 +67,4 @@ def train_model(n_steps=20000, n_back=30, batch=100, n_rnn=16, learning_rate=0.0
     plt.subplot(2,1,2)
     plt.plot(ch_state_pc1)
     plt.ylabel('RNN state PC1')
+

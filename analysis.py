@@ -23,9 +23,11 @@ def make_plots(episode_buffer, task, Str_model):
     plot_performance(episode_buffer, task)
     stay_probability_analysis(episode_buffer)
     sec_step_value_analysis(episode_buffer, Str_model, task)
-    plot_PFC_PC1(episode_buffer, task)
+    plot_PFC_choice_state_activity(episode_buffer, task)
 
 #%% Analysis functions
+
+# Plot performance ------------------------------------------------------------
 
 def plot_performance(episode_buffer, task, fig_no=1):
     ''''Plot the evolution of the number of steps needed to complete each trial and the 
@@ -55,6 +57,7 @@ def plot_performance(episode_buffer, task, fig_no=1):
     plt.axhline(0.5, c='k', ls='--')
     cor_ch_rr = task.good_prob*task.common_prob+(1-task.good_prob)*(1-task.common_prob) # Reward rate if every choice is correct
     plt.axhline(cor_ch_rr, c='k', ls=':')
+    plt.ylim(ymin=0.4)
     plt.ylabel('Rewards per trial')
     plt.yticks(np.arange(0.4,0.9,0.1))
     plt.xlim(0,len(episode_buffer))
@@ -64,6 +67,8 @@ def plot_performance(episode_buffer, task, fig_no=1):
     plt.xlabel('Episode #')
     plt.xlim(0,len(episode_buffer))
     plt.show()
+    
+# Stay probability analysis ---------------------------------------------------
     
 def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
     '''Standard two-step task stay probability analysis'''
@@ -120,6 +125,8 @@ def _get_CSTO(ep, return_inds=False):
     else:
         return choices, sec_steps, transitions, outcomes
     
+# Second step value analysis --------------------------------------------------    
+    
 def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3):
     '''Plot the change in value of second-step states from one trial to the next as a function of the trial outcome
     and whether the outcome occured in the same or different second-step state.'''
@@ -142,14 +149,24 @@ def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3
                                  dVB[(sec_steps[:-1] == 1) & ~outcomes[:-1]]])          
         value_updates[i,:] = [np.mean(rew_same_dV), np.mean(rew_diff_dV), np.mean(non_same_dV), np.mean(non_diff_dV)]
     plt.figure(fig_no, clear=True)
+    plt.subplot(1,2,1)
     plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = np.std(value_updates,0), ls='none', marker='o')
     plt.xticks(np.arange(4), ['Rew same', 'Rew diff', 'Non same', 'Non diff'])
     plt.axhline(0,c='k',lw=0.5)
     plt.ylabel('Change in state value')
     plt.xlabel('Trial outcome')
- 
+    plt.subplot(1,2,2)
+    plt.errorbar(np.arange(2), np.mean(value_updates[:,0::2]-value_updates[:,1::2],0), 
+                 yerr = np.std(value_updates[:,0::2]-value_updates[:,1::2],0), ls='none', marker='o')
+    plt.xticks(np.arange(2), ['same', 'diff'])
+    plt.axhline(0,c='k',lw=0.5)
+    plt.ylabel('Effect of reward on state value')
+    plt.xlabel('State')
+    plt.xlim(-0.5,1.5)
     
-def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
+# Plot PFC choice state activity ----------------------------------------------
+    
+def plot_PFC_choice_state_activity(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_features = []
     for ep in episode_buffer[-last_n:]:
@@ -162,6 +179,7 @@ def plot_PFC_PC1(episode_buffer, task, last_n=3, fig_no=4):
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
     
+# Simulate optogenetic manipulation.
     
 def sim_opto(episode_buffer, Str_model, task, last_n=10):
     stay_probs_cs = np.zeros([last_n, 4])

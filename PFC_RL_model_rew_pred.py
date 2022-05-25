@@ -20,10 +20,10 @@ Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_input', 'p
 
 # Simulation parameters.
 n_episodes = 500
-episode_len = 100  # Episode length in trials.
+episode_len = 20  # Episode length in trials.
 gamma = 0.9        # Discount rate
-max_step_per_episode = 600
-entropy_loss_weight = 0.05
+max_step_per_episode = 60
+entropy_loss_weight = 0.03
 
 #Task params.
 good_prob = 0.8

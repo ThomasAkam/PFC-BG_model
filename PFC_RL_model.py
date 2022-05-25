@@ -23,7 +23,7 @@ n_episodes = 500
 episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
-entropy_loss_weight = 0.05
+entropy_loss_weight = 0.03
 
 #Task params.
 good_prob = 0.8
@@ -128,8 +128,9 @@ for e in range(n_episodes):
         s, r = task.step(a)
         
         # Get new pfc state.
-        pfc_a = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:])
-        
+        # pfc_a = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, this way is slower but does not give errors.
+        pfc_a = Get_pfc_state.predict_on_batch(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, this way is faster and returns same result but sometimes gives an error message.
+
         n_trials = task.trial_n - start_trial
         if n_trials == episode_len or step_n >= max_step_per_episode and s == 0:
             break # End of episode.  
@@ -140,7 +141,7 @@ for e in range(n_episodes):
     episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_input), 
                            np.vstack(pfc_states), np.vstack(values), np.array(pred_states), n_trials))
     
-    # Update striatum weights
+    # Update striatum weights using advantage actor critic (A2C), Mnih et al. PMLR 48:1928-1937, 2016
     
     returns = np.zeros([len(rewards),1], dtype='float32')
     returns[-1] = V
@@ -162,7 +163,7 @@ for e in range(n_episodes):
 
     str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
          
-    # Update PFC 
+    # Update PFC weights to better predict next observation.
     
     tl = PFC_model.train_on_batch(np.array(pfc_input), one_hot(states, task.n_states))
         
@@ -173,7 +174,7 @@ for e in range(n_episodes):
 
 # Plotting at end of run.
         
-# an.make_plots(episode_buffer, task, Str_model)
+an.make_plots(episode_buffer, task, Str_model)
     
 #%% Save / load data.
 
