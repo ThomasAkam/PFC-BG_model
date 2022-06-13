@@ -257,7 +257,7 @@ def sim_opto(episode_buffer, Str_model, task, last_n=10):
 def _opto_choice_probs(Str_model, all_ch_inds, episode, task, stim_inds):
     '''Evalute how training the striatum model using gradients due to artificially evoked opto RPE
     affects choice probabilities on the subseqeunt choice states.''' 
-    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
+    states, rewards, actions, pfc_states, values, pred_states, n_trials = episode
     orig_weights = Str_model.get_weights()
     
     # Update model weights.

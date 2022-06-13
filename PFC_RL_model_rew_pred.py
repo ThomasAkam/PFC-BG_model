@@ -14,7 +14,7 @@ import analysis as an
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
-Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_input', 'pfc_states', 'values', 'pred_states', 'n_trials'])
+Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_states', 'values', 'pred_states', 'n_trials'])
 
 #%% Parameters.
 
@@ -136,7 +136,7 @@ for e in range(n_episodes):
     # Store episode data.
     
     pred_states = np.argmax(PFC_model.predict(np.array(pfc_input)),1) # Used only for analysis.
-    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_input), 
+    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions),
                            np.vstack(pfc_states), np.vstack(values), None, n_trials))
     
     # Update striatum weights

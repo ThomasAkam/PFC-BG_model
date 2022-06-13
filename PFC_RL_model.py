@@ -14,7 +14,7 @@ import analysis as an
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
-Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_input', 'pfc_states', 'values', 'pred_states', 'n_trials'])
+Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_states', 'values', 'pred_states', 'n_trials'])
 
 #%% Parameters.
 
@@ -23,7 +23,7 @@ n_episodes = 500
 episode_len = 100  # Episode length in trials.
 gamma = 0.9        # Discount rate
 max_step_per_episode = 600
-entropy_loss_weight = 0.03
+entropy_loss_weight = 0.05
 
 #Task params.
 good_prob = 0.8
@@ -35,6 +35,7 @@ n_pfc = 16
 pfc_learning_rate = 0.01
 
 # Striatum model parameters.
+n_str = 10
 str_learning_rate = 0.05
 
 #%% Instantiate task.
@@ -67,12 +68,10 @@ def update_pfc_input(s,a):
 obs_state = layers.Input(shape=(task.n_states,)) # Observable state features.
 pfc_state = layers.Input(shape=(n_pfc,))         # PFC activity features.
 combined_features = keras.layers.Concatenate(axis=1)([obs_state, pfc_state])
-relu = layers.Dense(task.n_states, activation="relu")(combined_features)
-#common = keras.layers.add([obs_state, relu]) # Add residual connections from observable features to output of relu layer.
-common = keras.layers.Concatenate(axis=1)([obs_state, relu])
+relu = layers.Dense(n_str, activation="relu")(combined_features)
 
-actor = layers.Dense(task.n_actions, activation="softmax")(common)
-critic = layers.Dense(1)(common)
+actor = layers.Dense(task.n_actions, activation="softmax")(relu)
+critic = layers.Dense(1)(relu)
 
 Str_model = keras.Model(inputs=[obs_state, pfc_state], outputs=[actor, critic])
 str_optimizer = keras.optimizers.Adam(learning_rate=str_learning_rate)
@@ -128,8 +127,8 @@ for e in range(n_episodes):
         s, r = task.step(a)
         
         # Get new pfc state.
-        # pfc_a = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, this way is slower but does not give errors.
-        pfc_a = Get_pfc_state.predict_on_batch(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, this way is faster and returns same result but sometimes gives an error message.
+        # pfc_a = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, slower but does not give errors.
+        pfc_a = Get_pfc_state.predict_on_batch(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, faster and returns same result but sometimes gives an error message.
 
         n_trials = task.trial_n - start_trial
         if n_trials == episode_len or step_n >= max_step_per_episode and s == 0:
@@ -138,7 +137,7 @@ for e in range(n_episodes):
     # Store episode data.
     
     pred_states = np.argmax(PFC_model.predict(np.array(pfc_input)),1) # Used only for analysis.
-    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_input), 
+    episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions),
                            np.vstack(pfc_states), np.vstack(values), np.array(pred_states), n_trials))
     
     # Update striatum weights using advantage actor critic (A2C), Mnih et al. PMLR 48:1928-1937, 2016
