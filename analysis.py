@@ -1,11 +1,15 @@
 #%%  Imports 
 
+import os
+import json
+import pickle
 import numpy as np
 import pylab as plt
 import tensorflow as tf
 from sklearn.decomposition import PCA
 from tensorflow import keras
 from functools import partial
+from collections import namedtuple
 
 import Two_step_task as ts
 
@@ -15,17 +19,50 @@ plt.rc("axes.spines", top=False, right=False)
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
+Run_data = namedtuple('Run_data', ['params', 'episode_buffer', 'PFC_model', 'Str_model', 'task']) # Holds data from one simulation run.
+
+#%% Load data.
+  
+def load_run(run_dir):
+    '''Load data from a single simulation run.'''
+    with open(os.path.join(run_dir,'params.json'), 'r') as fp:
+            params = json.load(fp)
+    with open(os.path.join(run_dir, 'episodes.pkl'), 'rb') as f: 
+        episode_buffer = pickle.load(f)
+    PFC_model = keras.models.load_model(os.path.join(run_dir, 'PFC_model'))
+    Str_model = keras.models.load_model(os.path.join(run_dir, 'Str_model'))
+    task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
+    return Run_data(params, episode_buffer, PFC_model, Str_model, task)
+
+def load_experiment(exp_dir):
+    '''Load data from an experiment comprising multiple simulation runs'''
+    run_dirs = os.listdir(exp_dir)
+    experiment_data = [load_run(os.path.join(exp_dir, run_dir)) for run_dir in run_dirs]
+    return experiment_data
 
 #%% Analysis functions
 
-def make_plots(episode_buffer, task, Str_model):
-    '''Run all plotting functions'''
+# Multi-analysis functions
+
+def make_plots(episode_buffer, task, Str_model, PFC_model):
+    '''Run all plotting functions for a single simulation run.'''
     plot_performance(episode_buffer, task)
     stay_probability_analysis(episode_buffer)
-    sec_step_value_analysis(episode_buffer, Str_model, task)
+    sec_step_value_analysis(episode_buffer, Str_model, PFC_model, task)
     plot_PFC_choice_state_activity(episode_buffer, task)
+    
 
-#%% Analysis functions
+def plot_run(run_dir):
+    '''Load data for a single simulation run from disk and run plots.'''
+    rd = load_run(run_dir)
+    make_plots(rd.episode_buffer, rd.task, rd.Str_model, rd.PFC_model)
+    
+def plot_experiment(exp_dir):
+    '''Load data for an experiment comprising multiple simulation runs and 
+    make plots showing cross run standard deviation.'''
+    experiment_data = load_experiment(exp_dir)
+    stay_probability_analysis_exp(experiment_data)
+    sec_step_value_analysis_exp(experiment_data)
 
 # Plot performance ------------------------------------------------------------
 
@@ -70,8 +107,8 @@ def plot_performance(episode_buffer, task, fig_no=1):
     
 # Stay probability analysis ---------------------------------------------------
     
-def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
-    '''Standard two-step task stay probability analysis'''
+def stay_probability_analysis(episode_buffer, last_n=10, return_means=False, fig_no=2):
+    '''Standard two-step task stay probability analysis for a single simulation run.'''
     stay_probs = []
     for ep in episode_buffer[-last_n:]:
         choices, sec_steps, transitions, outcomes = _get_CSTO(ep)
@@ -81,8 +118,21 @@ def stay_probability_analysis(episode_buffer, last_n=100, fig_no=2):
         sp_comm_non = np.mean(stays[ transitions[:-1] & ~outcomes[:-1]])
         sp_rare_non = np.mean(stays[~transitions[:-1] & ~outcomes[:-1]])
         stay_probs.append(np.array([sp_comm_rew, sp_rare_rew, sp_comm_non, sp_rare_non]))
+    if return_means:
+        return np.mean(stay_probs,0)
+    else:
+        _stay_probability_plot(np.array(stay_probs), fig_no)
+      
+def stay_probability_analysis_exp(experiment_data, fig_no=2):
+    '''Stay probability analysis for an experiment comprising mulitple simulation runs.'''
+    stay_probs = np.zeros([len(experiment_data),4])
+    for i, run_data in enumerate(experiment_data):
+        stay_probs[i,:] = stay_probability_analysis(run_data.episode_buffer, return_means=True)
+    _stay_probability_plot(stay_probs, fig_no)
+    
+def _stay_probability_plot(stay_probs, fig_no):
     plt.figure(fig_no, clear=True)
-    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=np.std(stay_probs,0)/np.sqrt(last_n))
+    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=np.std(stay_probs,0))
     plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
@@ -127,16 +177,28 @@ def _get_CSTO(ep, return_inds=False):
     
 # Second step value analysis --------------------------------------------------    
     
-def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3):
-    '''Plot the change in value of second-step states from one trial to the next as a function of the trial outcome
-    and whether the outcome occured in the same or different second-step state.'''
+def sec_step_value_analysis(episode_buffer, Str_model, PFC_model, task, last_n=10, return_means=False, fig_no=3):
+    '''For a single simulation run, pot the change in value of second-step states from one trial to the next
+    as a function of the trial outcome and whether the second-step state on the next trial is the same or
+    different.  Evaluates both second-step states on each trial by generating the apropriate input to the 
+    striatum model. '''
     value_updates = np.zeros([last_n, 4])
     for i,ep in enumerate(episode_buffer[-last_n:]):
         _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
-        # Get values of states sec step A and sec step B.
-        _, V_ssA = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states), np.vstack(ep.pfc_states)[ss_inds,:]])
-        _, V_ssB = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states), np.vstack(ep.pfc_states)[ss_inds,:]])
-    
+        # Generate PFC activity that would have occured for each second step state on each trial.
+        Get_pfc_state = keras.Model(inputs=PFC_model.input, # Model variant used to get state of RNN layer.
+                                     outputs=PFC_model.get_layer('rnn').output)
+        ss_pfc_inputs = ep.pfc_inputs[ss_inds]
+        ss_pfc_inputs[:,-1,:task.n_states] = 0
+        ss_pfc_inputs[:,-1,ts.sec_step_A]  = 1
+        ss_pfc_states_A = Get_pfc_state(ss_pfc_inputs) # PFC activity if second-step reached was A.
+        ss_pfc_inputs[:,-1,:task.n_states] = 0
+        ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
+        ss_pfc_states_B = Get_pfc_state(ss_pfc_inputs) # PFC activity if second-step reached was B.
+        # Compute values of both second step states on each trial.
+        _, V_ssA = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states), ss_pfc_states_A])
+        _, V_ssB = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states), ss_pfc_states_B])
+        # Compute value changes as a function of trial outcome and same/different second-step state.
         dVA = np.diff(V_ssA.numpy().squeeze())
         dVB = np.diff(V_ssB.numpy().squeeze())
         rew_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) &  outcomes[:-1]],
@@ -148,21 +210,36 @@ def sec_step_value_analysis(episode_buffer, Str_model, task, last_n=10, fig_no=3
         non_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) & ~outcomes[:-1]],
                                  dVB[(sec_steps[:-1] == 1) & ~outcomes[:-1]]])          
         value_updates[i,:] = [np.mean(rew_same_dV), np.mean(rew_diff_dV), np.mean(non_same_dV), np.mean(non_diff_dV)]
+        if return_means:
+            return(np.mean(value_updates,0))
+        else:
+            _sec_step_value_analysis_plot(value_updates, fig_no)
+            
+def sec_step_value_analysis_exp(experiment_data, fig_no=2):
+    '''Second step value analysis for an experiment comprising mulitple simulation runs.'''
+    value_updates = np.zeros([len(experiment_data),4])
+    for i, rd in enumerate(experiment_data):
+        value_updates[i,:] = sec_step_value_analysis(rd.episode_buffer, rd.Str_model, rd.PFC_model, rd.task, return_means=True)
+    _sec_step_value_analysis_plot(value_updates, fig_no)
+    
+def _sec_step_value_analysis_plot(value_updates, fig_no):
     plt.figure(fig_no, clear=True)
     plt.subplot(1,2,1)
     plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = np.std(value_updates,0), ls='none', marker='o')
     plt.xticks(np.arange(4), ['Rew same', 'Rew diff', 'Non same', 'Non diff'])
     plt.axhline(0,c='k',lw=0.5)
+    plt.xlim(-0.5,3.5)
     plt.ylabel('Change in state value')
     plt.xlabel('Trial outcome')
     plt.subplot(1,2,2)
-    plt.errorbar(np.arange(2), np.mean(value_updates[:,0::2]-value_updates[:,1::2],0), 
-                 yerr = np.std(value_updates[:,0::2]-value_updates[:,1::2],0), ls='none', marker='o')
+    plt.errorbar(np.arange(2), np.mean(value_updates[:,:2]-value_updates[:,2:],0), 
+                 yerr = np.std(value_updates[:,:2]-value_updates[:,2:],0), ls='none', marker='o')
     plt.xticks(np.arange(2), ['same', 'diff'])
     plt.axhline(0,c='k',lw=0.5)
     plt.ylabel('Effect of reward on state value')
     plt.xlabel('State')
     plt.xlim(-0.5,1.5)
+    plt.tight_layout()
     
 # Plot PFC choice state activity ----------------------------------------------
     
@@ -257,7 +334,7 @@ def sim_opto(episode_buffer, Str_model, task, last_n=10):
 def _opto_choice_probs(Str_model, all_ch_inds, episode, task, stim_inds):
     '''Evalute how training the striatum model using gradients due to artificially evoked opto RPE
     affects choice probabilities on the subseqeunt choice states.''' 
-    states, rewards, actions, pfc_states, values, pred_states, n_trials = episode
+    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
     orig_weights = Str_model.get_weights()
     
     # Update model weights.

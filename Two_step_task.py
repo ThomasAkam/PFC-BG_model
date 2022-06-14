@@ -19,9 +19,8 @@ reward_B = 5
 
 class Two_step():
 
-    def __init__(self, common_prob=0.8, good_prob=0.8, block_len=[20,40], punish_invalid=True):
+    def __init__(self, common_prob=0.8, good_prob=0.8, block_len=[20,40]):
         super(Two_step, self).__init__()
-        self.punish_invalid = punish_invalid
         self.common_prob  = common_prob
         self.good_prob = good_prob
         self.block_len = block_len 
@@ -43,8 +42,6 @@ class Two_step():
                     self.A_good = not self.A_good
                     self.block_trial = 0
                     self.trials_till_reversal = np.random.randint(*self.block_len)
-            elif self.punish_invalid:
-                reward = -1
         elif self.state == choice: # Choice state
             if action == choose_A:
                 if withprob(self.common_prob):
@@ -56,8 +53,6 @@ class Two_step():
                     self.state = sec_step_B
                 else:
                     self.state = sec_step_A
-            elif self.punish_invalid:
-                reward = -1
         elif self.state == sec_step_A: # Second step A state
             if action == sec_step_A:
                 if ((self.A_good and withprob(self.good_prob)) or
@@ -66,8 +61,6 @@ class Two_step():
                     self.state = reward_A
                 else:
                     self.state = initiate
-            elif self.punish_invalid:
-                reward = -1
         elif self.state == sec_step_B:
             if action == sec_step_B: 
                 if ((self.A_good and withprob(1 - self.good_prob)) or
@@ -76,8 +69,6 @@ class Two_step():
                     self.state = reward_B
                 else:
                     self.state = initiate
-            elif self.punish_invalid:
-                reward = -1
         return self.state, reward
     
     def reset(self):
