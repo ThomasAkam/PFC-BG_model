@@ -66,7 +66,7 @@ def run_simulation(save_dir=default_dir, pm=default_params):
         '''Update the inputs to the PFC network given the state and action.'''
         pfc_input_buffer[:-1,:] = pfc_input_buffer[1:,:]
         pfc_input_buffer[-1,:] = 0
-        pfc_input_buffer[-1,s] = 1               # One hot encoding of old state.
+        pfc_input_buffer[-1,s] = 1               # One hot encoding of state.
         pfc_input_buffer[-1,a+task.n_states] = 1 # One hot encoding of action.
         
     def get_masked_PFC_inputs(pfc_inputs):

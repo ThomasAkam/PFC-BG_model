@@ -185,7 +185,7 @@ def sec_step_value_analysis(episode_buffer, Str_model, PFC_model, task, last_n=1
     value_updates = np.zeros([last_n, 4])
     for i,ep in enumerate(episode_buffer[-last_n:]):
         _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
-        # Generate PFC activity that would have occured for each second step state on each trial.
+        # Generate PFC activity that would have occured had each second step state been reached on each trial.
         Get_pfc_state = keras.Model(inputs=PFC_model.input, # Model variant used to get state of RNN layer.
                                      outputs=PFC_model.get_layer('rnn').output)
         ss_pfc_inputs = ep.pfc_inputs[ss_inds]
@@ -215,7 +215,7 @@ def sec_step_value_analysis(episode_buffer, Str_model, PFC_model, task, last_n=1
         else:
             _sec_step_value_analysis_plot(value_updates, fig_no)
             
-def sec_step_value_analysis_exp(experiment_data, fig_no=2):
+def sec_step_value_analysis_exp(experiment_data, fig_no=3):
     '''Second step value analysis for an experiment comprising mulitple simulation runs.'''
     value_updates = np.zeros([len(experiment_data),4])
     for i, rd in enumerate(experiment_data):
@@ -245,18 +245,33 @@ def _sec_step_value_analysis_plot(value_updates, fig_no):
     
 def plot_PFC_choice_state_activity(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
-    ch_state_PFC_features = []
+    ch_state_PFC_activity = []
     for ep in episode_buffer[-last_n:]:
-        ch_state_PFC_features.append(ep.pfc_states[ep.states==ts.choice])
-    ch_state_PFC_features = np.vstack(ch_state_PFC_features) 
-    PC1 = PCA(n_components=1).fit(ch_state_PFC_features).transform(ch_state_PFC_features)
+        ch_state_PFC_activity.append(ep.pfc_states[ep.states==ts.choice])
+    ch_state_PFC_activity = np.vstack(ch_state_PFC_activity) 
+    PC1 = PCA(n_components=1).fit(ch_state_PFC_activity).transform(ch_state_PFC_activity)
+    if not fig_no: return PC1
     plt.figure(fig_no, clear=True)
     plt.plot(PC1)
     plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
     
-# Simulate optogenetic manipulation.
+def plot_PFC_choice_state_activity_exp(experiment_data, fig_no=2):
+    '''Plot the first principle component of variation in the PFC activity in the choice state across trials,
+    seperately for each run in an experiment.'''
+    n_runs = len(experiment_data)
+    plt.figure(fig_no, clear=True)
+    for i, run_data in enumerate(experiment_data):
+        PC1 = plot_PFC_choice_state_activity(run_data.episode_buffer, run_data.task, fig_no=False)
+        plt.subplot(n_runs,1,i+1)
+        plt.plot(PC1)
+        plt.xlim(0,len(PC1))
+        if i == n_runs//2:
+            plt.ylabel('First principle component of\nchoice state PFC activity')
+    plt.xlabel('Trials')
+            
+# Simulate optogenetic manipulation. ------------------------------------------
     
 def sim_opto(episode_buffer, Str_model, task, last_n=10):
     stay_probs_cs = np.zeros([last_n, 4])
@@ -333,7 +348,7 @@ def sim_opto(episode_buffer, Str_model, task, last_n=10):
     
 def _opto_choice_probs(Str_model, all_ch_inds, episode, task, stim_inds):
     '''Evalute how training the striatum model using gradients due to artificially evoked opto RPE
-    affects choice probabilities on the subseqeunt choice states.''' 
+    affects choice probabilities on the subsequent choice states.''' 
     states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
     orig_weights = Str_model.get_weights()
     
