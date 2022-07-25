@@ -53,8 +53,8 @@ def load_experiment(exp_dir, good_only=True):
 
 def ave_reward_rate(run_data, last_n=10, return_p_value=False):
     episode_reward_rates = []
-    for episode in run_data.episode_buffer[-last_n:]:
-        episode_reward_rates.append(np.sum(episode.rewards)/episode.n_trials)
+    for ep in run_data.episode_buffer[-last_n:]:
+        episode_reward_rates.append(np.sum(ep.rewards)/ep.n_trials)
     if return_p_value:
         return  ttest_1samp(episode_reward_rates,0.5).pvalue
     else:
@@ -231,10 +231,10 @@ def sec_step_value_analysis(episode_buffer, Str_model, PFC_model, task, last_n=1
         non_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) & ~outcomes[:-1]],
                                  dVB[(sec_steps[:-1] == 1) & ~outcomes[:-1]]])          
         value_updates[i,:] = [np.mean(rew_same_dV), np.mean(rew_diff_dV), np.mean(non_same_dV), np.mean(non_diff_dV)]
-        if return_means:
-            return(np.mean(value_updates,0))
-        else:
-            _sec_step_value_analysis_plot(value_updates, fig_no)
+    if return_means:
+        return(np.mean(value_updates,0))
+    else:
+        _sec_step_value_analysis_plot(value_updates, fig_no)
             
 def sec_step_value_analysis_exp(experiment_data, fig_no=3):
     '''Second step value analysis for an experiment comprising mulitple simulation runs.'''
@@ -309,9 +309,9 @@ def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
         # Simulate opto stim effects.
         episode_cs_dfs = []
         episode_os_dfs = []
-        for episode in run_data.episode_buffer[-last_n:]:
-            episode_cs_dfs.append(_opto_stay_probs(run_data.Str_model, episode, run_data.task, 'choice_time' , stim_strength))
-            episode_os_dfs.append(_opto_stay_probs(run_data.Str_model, episode, run_data.task, 'outcome_time', stim_strength))
+        for ep in run_data.episode_buffer[-last_n:]:
+            episode_cs_dfs.append(_opto_stay_probs(run_data.Str_model, ep, run_data.task, 'choice_time' , stim_strength))
+            episode_os_dfs.append(_opto_stay_probs(run_data.Str_model, ep, run_data.task, 'outcome_time', stim_strength))
         choice_stim_df  = pd.concat(episode_cs_dfs)
         outcome_stim_df = pd.concat(episode_os_dfs)
 
@@ -334,16 +334,15 @@ def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
     return choice_stim_fits, outcome_stim_fits
     
  
-def _opto_stay_probs(Str_model, episode, task, stim_type, stim_strength):
+def _opto_stay_probs(Str_model, ep, task, stim_type, stim_strength):
     '''Evalute how training the striatum model using gradients due to opto RPE
-    on individual trials affects stay probability for one episode.''' 
+    on individual trials affects stay probability for one episode (ep).''' 
     
-    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-    choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(episode, return_inds=True)
+    choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
     orig_weights = Str_model.get_weights()
     
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
-    action_probs = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])[0].numpy()
+    action_probs = Str_model([one_hot(ep.states, task.n_states), tf.concat(ep.pfc_states,0)])[0].numpy()
     choice_probs_nons = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
 
     # Compute A/B choice probabilities following opto stim on individual trials.    
@@ -358,10 +357,10 @@ def _opto_stay_probs(Str_model, episode, task, stim_type, stim_strength):
         with tf.GradientTape() as tape:
                 # Critic loss.
                 tr_action_probs, tr_value = Str_model(
-                    [one_hot(states[i], task.n_states)[np.newaxis,:], pfc_states[i][np.newaxis,:]]) # Action probs and values for single trial.
+                    [one_hot(ep.states[i], task.n_states)[np.newaxis,:], ep.pfc_states[i][np.newaxis,:]]) # Action probs and values for single trial.
                 critic_loss = -2*stim_strength*tr_value
                 # Actor loss.
-                log_chosen_prob = tf.math.log(tr_action_probs[0,actions[i]])
+                log_chosen_prob = tf.math.log(tr_action_probs[0, ep.actions[i]])
                 actor_loss = -log_chosen_prob*stim_strength
                 # Compute gradients.
                 grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
@@ -369,7 +368,7 @@ def _opto_stay_probs(Str_model, episode, task, stim_type, stim_strength):
         SGD_optimiser.apply_gradients(zip(grads, Str_model.trainable_variables))
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
-        nt_action_probs, _ = Str_model([one_hot(states[j], task.n_states)[np.newaxis,:], pfc_states[j][np.newaxis,:]])
+        nt_action_probs, _ = Str_model([one_hot(ep.states[j], task.n_states)[np.newaxis,:], ep.pfc_states[j][np.newaxis,:]])
         choice_probs_stim[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
         # Reset model weights.
         Str_model.set_weights(orig_weights)
