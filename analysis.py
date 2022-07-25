@@ -4,11 +4,15 @@ import os
 import json
 import pickle
 import numpy as np
+import pandas as pd
 import pylab as plt
+import seaborn as sns
 import tensorflow as tf
+import statsmodels.formula.api as smf
+from scipy.special import logit
+from scipy.stats import ttest_1samp, sem
 from sklearn.decomposition import PCA
 from tensorflow import keras
-from functools import partial
 from collections import namedtuple
 
 import Two_step_task as ts
@@ -34,13 +38,28 @@ def load_run(run_dir):
     task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
     return Run_data(params, episode_buffer, PFC_model, Str_model, task)
 
-def load_experiment(exp_dir):
-    '''Load data from an experiment comprising multiple simulation runs'''
+def load_experiment(exp_dir, good_only=True):
+    '''Load data from an experiment comprising multiple simulation runs, if good_only
+    is True then only runs for which the reward rate in the last 10 episodes is
+   significantly higher than 0.5 are returned.'''
     run_dirs = os.listdir(exp_dir)
     experiment_data = [load_run(os.path.join(exp_dir, run_dir)) for run_dir in run_dirs]
+    if good_only:
+        experiment_data = [run_data for run_data in experiment_data 
+                           if ave_reward_rate(run_data, return_p_value=True) < 0.05]
     return experiment_data
 
 #%% Analysis functions
+
+def ave_reward_rate(run_data, last_n=10, return_p_value=False):
+    episode_reward_rates = []
+    for episode in run_data.episode_buffer[-last_n:]:
+        episode_reward_rates.append(np.sum(episode.rewards)/episode.n_trials)
+    if return_p_value:
+        return  ttest_1samp(episode_reward_rates,0.5).pvalue
+    else:
+        return np.mean(episode_reward_rates) #
+        
 
 # Multi-analysis functions
 
@@ -52,17 +71,17 @@ def make_plots(episode_buffer, task, Str_model, PFC_model):
     plot_PFC_choice_state_activity(episode_buffer, task)
     
 
-def plot_run(run_dir):
-    '''Load data for a single simulation run from disk and run plots.'''
-    rd = load_run(run_dir)
-    make_plots(rd.episode_buffer, rd.task, rd.Str_model, rd.PFC_model)
+def plot_run(run_data):
+    '''Make plots from a Run_data tuple'''
+    make_plots(run_data.episode_buffer, run_data.task, run_data.Str_model, run_data.PFC_model)
     
-def plot_experiment(exp_dir):
+def plot_experiment(experiment_data):
     '''Load data for an experiment comprising multiple simulation runs and 
     make plots showing cross run standard deviation.'''
-    experiment_data = load_experiment(exp_dir)
-    stay_probability_analysis_exp(experiment_data)
-    sec_step_value_analysis_exp(experiment_data)
+    stay_probability_analysis_exp(experiment_data, fig_no=1)
+    sec_step_value_analysis_exp(experiment_data, fig_no=2)
+    plot_PFC_choice_state_activity_exp(experiment_data, fig_no=3)
+    opto_stim_analysis(experiment_data, fig_no=4)
 
 # Plot performance ------------------------------------------------------------
 
@@ -131,11 +150,13 @@ def stay_probability_analysis_exp(experiment_data, fig_no=2):
     _stay_probability_plot(stay_probs, fig_no)
     
 def _stay_probability_plot(stay_probs, fig_no):
-    plt.figure(fig_no, clear=True)
-    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=np.std(stay_probs,0))
+    plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
+    plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=sem(stay_probs,0), ecolor='r')
+    sns.stripplot(data=stay_probs, color='k', size=2)
     plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
+    plt.tight_layout()
     
 def _get_CSTO(ep, return_inds=False):
     '''Get the choices, second step states, transitions and outcomes for one episode as
@@ -223,17 +244,19 @@ def sec_step_value_analysis_exp(experiment_data, fig_no=3):
     _sec_step_value_analysis_plot(value_updates, fig_no)
     
 def _sec_step_value_analysis_plot(value_updates, fig_no):
-    plt.figure(fig_no, clear=True)
+    plt.figure(fig_no, figsize=[6.2,2.4], clear=True)
     plt.subplot(1,2,1)
-    plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = np.std(value_updates,0), ls='none', marker='o')
+    sns.stripplot(data=value_updates, color='k', size=3)
+    plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = sem(value_updates,0), ls='none', color='r', elinewidth=2)
     plt.xticks(np.arange(4), ['Rew same', 'Rew diff', 'Non same', 'Non diff'])
     plt.axhline(0,c='k',lw=0.5)
     plt.xlim(-0.5,3.5)
     plt.ylabel('Change in state value')
     plt.xlabel('Trial outcome')
     plt.subplot(1,2,2)
-    plt.errorbar(np.arange(2), np.mean(value_updates[:,:2]-value_updates[:,2:],0), 
-                 yerr = np.std(value_updates[:,:2]-value_updates[:,2:],0), ls='none', marker='o')
+    reward_effect = value_updates[:,:2]-value_updates[:,2:]
+    sns.stripplot(data=reward_effect, color='k', size=3)
+    plt.errorbar(np.arange(2), np.mean(reward_effect,0), yerr=sem(reward_effect,0), ls='none', color='r', elinewidth=2)
     plt.xticks(np.arange(2), ['same', 'diff'])
     plt.axhline(0,c='k',lw=0.5)
     plt.ylabel('Effect of reward on state value')
@@ -271,115 +294,122 @@ def plot_PFC_choice_state_activity_exp(experiment_data, fig_no=2):
             plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
             
+  
 # Simulate optogenetic manipulation. ------------------------------------------
-    
-def sim_opto(episode_buffer, Str_model, task, last_n=10):
-    stay_probs_cs = np.zeros([last_n, 4])
-    stay_probs_os = np.zeros([last_n, 4])
-    for i, ep in enumerate(episode_buffer[-last_n:]):
-        choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
-        # Get indices of different choice states defined by A/B choice and subsequent common/rare transition.
-        A_comm_ch_inds = ch_inds[ choices &  transitions]
-        A_rare_ch_inds = ch_inds[ choices & ~transitions]
-        B_comm_ch_inds = ch_inds[~choices &  transitions]
-        B_rare_ch_inds = ch_inds[~choices & ~transitions]
 
-        ocp = partial(_opto_choice_probs, Str_model, ch_inds, ep, task)
-        
-        # Caclulate choice stim stay probabilities.
-        A_comm_nons_cp_0, A_comm_stim_cp_0 = ocp(A_comm_ch_inds[0:-1:2])
-        A_comm_nons_cp_1, A_comm_stim_cp_1 = ocp(A_comm_ch_inds[1:-1:2])
-        A_rare_nons_cp_0, A_rare_stim_cp_0 = ocp(A_rare_ch_inds[0:-1:2])
-        A_rare_nons_cp_1, A_rare_stim_cp_1 = ocp(A_rare_ch_inds[1:-1:2])
-        B_comm_nons_cp_0, B_comm_stim_cp_0 = ocp(B_comm_ch_inds[0:-1:2])
-        B_comm_nons_cp_1, B_comm_stim_cp_1 = ocp(B_comm_ch_inds[1:-1:2])
-        B_rare_nons_cp_0, B_rare_stim_cp_0 = ocp(B_rare_ch_inds[0:-1:2])
-        B_rare_nons_cp_1, B_rare_stim_cp_1 = ocp(B_rare_ch_inds[1:-1:2])
-    
-        sp_comm_stim = np.mean(np.concatenate([
-             np.vstack([A_comm_stim_cp_0, A_comm_stim_cp_1])[:,ts.choose_A],
-             np.vstack([B_comm_stim_cp_0, B_comm_stim_cp_1])[:,ts.choose_B]]))
-        sp_comm_nons = np.mean(np.concatenate([
-             np.vstack([A_comm_nons_cp_0, A_comm_nons_cp_1])[:,ts.choose_A],
-             np.vstack([B_comm_nons_cp_0, B_comm_nons_cp_1])[:,ts.choose_B]]))
-        sp_rare_stim = np.mean(np.concatenate([
-             np.vstack([A_rare_stim_cp_0, A_rare_stim_cp_1])[:,ts.choose_A],
-             np.vstack([B_rare_stim_cp_0, B_rare_stim_cp_1])[:,ts.choose_B]]))
-        sp_rare_nons = np.mean(np.concatenate([
-             np.vstack([A_rare_nons_cp_0, A_rare_nons_cp_1])[:,ts.choose_A],
-             np.vstack([B_rare_nons_cp_0, B_rare_nons_cp_1])[:,ts.choose_B]]))   
-        
-        stay_probs_cs[i,:] = [sp_comm_stim, sp_rare_stim, sp_comm_nons, sp_rare_nons]
-        
-        # Caclulate outcome stim stay probabilities.
-        A_comm_nons_cp_0, A_comm_stim_cp_0 = ocp(A_comm_ch_inds[0:-1:2]+1)
-        A_comm_nons_cp_1, A_comm_stim_cp_1 = ocp(A_comm_ch_inds[1:-1:2]+1)
-        A_rare_nons_cp_0, A_rare_stim_cp_0 = ocp(A_rare_ch_inds[0:-1:2]+1)
-        A_rare_nons_cp_1, A_rare_stim_cp_1 = ocp(A_rare_ch_inds[1:-1:2]+1)
-        B_comm_nons_cp_0, B_comm_stim_cp_0 = ocp(B_comm_ch_inds[0:-1:2]+1)
-        B_comm_nons_cp_1, B_comm_stim_cp_1 = ocp(B_comm_ch_inds[1:-1:2]+1)
-        B_rare_nons_cp_0, B_rare_stim_cp_0 = ocp(B_rare_ch_inds[0:-1:2]+1)
-        B_rare_nons_cp_1, B_rare_stim_cp_1 = ocp(B_rare_ch_inds[1:-1:2]+1)
-    
-        sp_comm_stim = np.mean(np.concatenate([
-             np.vstack([A_comm_stim_cp_0, A_comm_stim_cp_1])[:,ts.choose_A],
-             np.vstack([B_comm_stim_cp_0, B_comm_stim_cp_1])[:,ts.choose_B]]))
-        sp_comm_nons = np.mean(np.concatenate([
-             np.vstack([A_comm_nons_cp_0, A_comm_nons_cp_1])[:,ts.choose_A],
-             np.vstack([B_comm_nons_cp_0, B_comm_nons_cp_1])[:,ts.choose_B]]))
-        sp_rare_stim = np.mean(np.concatenate([
-             np.vstack([A_rare_stim_cp_0, A_rare_stim_cp_1])[:,ts.choose_A],
-             np.vstack([B_rare_stim_cp_0, B_rare_stim_cp_1])[:,ts.choose_B]]))
-        sp_rare_nons = np.mean(np.concatenate([
-             np.vstack([A_rare_nons_cp_0, A_rare_nons_cp_1])[:,ts.choose_A],
-             np.vstack([B_rare_nons_cp_0, B_rare_nons_cp_1])[:,ts.choose_B]]))   
-        
-        stay_probs_os[i,:] = [sp_comm_stim, sp_rare_stim, sp_comm_nons, sp_rare_nons]
-    
-    plt.figure(1, clear=True)
-    plt.subplot(1,2,1)
-    plt.bar(np.arange(4), np.mean(stay_probs_cs,0), yerr=np.std(stay_probs_cs,0))
-    plt.xticks(np.arange(4),['Com. stim', 'Rare stim', 'Com. nons', 'Rare nons'], rotation=-45)
-    plt.ylim(0,1)
-    plt.subplot(1,2,2)
-    plt.bar(np.arange(4), np.mean(stay_probs_os,0), yerr=np.std(stay_probs_os,0))
-    plt.xticks(np.arange(4),['Com. stim', 'Rare stim', 'Com. nons', 'Rare nons'], rotation=-45)  
-    plt.ylim(0,1)
-    
-def _opto_choice_probs(Str_model, all_ch_inds, episode, task, stim_inds):
-    '''Evalute how training the striatum model using gradients due to artificially evoked opto RPE
-    affects choice probabilities on the subsequent choice states.''' 
-    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
-    orig_weights = Str_model.get_weights()
-    
-    # Update model weights.
-    opto_stim = np.zeros(len(states))
-    opto_stim[stim_inds] = 1
-    
-    SGD_optimiser = keras.optimizers.SGD(learning_rate=0.01)
-    
-    with tf.GradientTape() as tape:
-        # Critic loss.
-        choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)]) # Gradient of these is tracked wrt Str_model weights.
-        critic_loss = sse_loss(values_g, tf.stop_gradient(values_g)+opto_stim)*(100/np.sum(opto_stim))
-        # Actor loss.
-        log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
-        actor_loss = tf.reduce_sum(-log_chosen_probs*opto_stim)*(100/np.sum(opto_stim))
-        # Apply gradients
-        grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
+def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
+    '''Evaluate effect of simulated optogenetic stimulation of stay proabilities for
+    the last_n episoces of each run in experiment.''' 
+    # Simulate choice and outcome time stimulation for each experiment run and analyse effects with linear regression.
+    choice_stim_fits  = []
+    outcome_stim_fits = []
+    print('Simulating opto stim for run: ', end='')
+    for r,run_data in enumerate(experiment_data,start=1):
+        print(f'{r} ', end='')
+        # Simulate opto stim effects.
+        episode_cs_dfs = []
+        episode_os_dfs = []
+        for episode in run_data.episode_buffer[-last_n:]:
+            episode_cs_dfs.append(_opto_stay_probs(run_data.Str_model, episode, run_data.task, 'choice_time' , stim_strength))
+            episode_os_dfs.append(_opto_stay_probs(run_data.Str_model, episode, run_data.task, 'outcome_time', stim_strength))
+        choice_stim_df  = pd.concat(episode_cs_dfs)
+        outcome_stim_df = pd.concat(episode_os_dfs)
 
-    SGD_optimiser.apply_gradients(zip(grads, Str_model.trainable_variables))
-    choice_probs_stim, _ = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])
+        # Regression analysis of stim effects.
+        choice_stim_fits.append( smf.ols(formula='logit_stay_prob ~ transition*outcome*stim', data=choice_stim_df ).fit().params)
+        outcome_stim_fits.append(smf.ols(formula='logit_stay_prob ~ transition*outcome*stim', data=outcome_stim_df).fit().params)
+    # Plot stim effects
+    choice_stim_fits  = pd.concat([fit.to_frame().T for fit in choice_stim_fits])
+    outcome_stim_fits = pd.concat([fit.to_frame().T for fit in outcome_stim_fits])
+
+    plt.figure(fig_no,clear=True)
+    ax1 = plt.subplot(2,1,1)
+    print('\nChoice time stim:')
+    _plot_opto_fits(choice_stim_fits, ax1, xticklabels=False)
+    ax2 = plt.subplot(2,1,2, sharex=ax1, sharey=ax1)
+    print('\nChoice time stim:')
+    _plot_opto_fits(outcome_stim_fits, ax2, xticklabels=True)
+    plt.tight_layout()
     
-    # Evaluate choice probabilities on the next choice states following stim states.
-    eval_inds = all_ch_inds[np.searchsorted(all_ch_inds, stim_inds+1)] # Where to evaluate choice probabilities.
-    assert np.intersect1d(stim_inds, eval_inds).size == 0, 'Overlaping stim and evaluation trials'
-    
-    ch_probs_nons  = tf.gather(choice_probs_g, eval_inds).numpy()
-    ch_probs_stim = tf.gather(choice_probs_stim, eval_inds).numpy()
-    
-    Str_model.set_weights(orig_weights) # Reset model weights.
-    
-    return ch_probs_nons, ch_probs_stim
+    return choice_stim_fits, outcome_stim_fits
     
  
+def _opto_stay_probs(Str_model, episode, task, stim_type, stim_strength):
+    '''Evalute how training the striatum model using gradients due to opto RPE
+    on individual trials affects stay probability for one episode.''' 
+    
+    states, rewards, actions, pfc_input, pfc_states, values, pred_states, n_trials = episode
+    choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(episode, return_inds=True)
+    orig_weights = Str_model.get_weights()
+    
+    # Compute A/B choice probabilities for each trial in the absence of stimulation.
+    action_probs = Str_model([one_hot(states, task.n_states), tf.concat(pfc_states,0)])[0].numpy()
+    choice_probs_nons = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
+
+    # Compute A/B choice probabilities following opto stim on individual trials.    
+    choice_probs_stim = np.ones(choice_probs_nons.shape)
+    SGD_optimiser = keras.optimizers.SGD(learning_rate=0.01)
+    for t in range(choice_probs_nons.shape[1]-1): # Loop over trials.
+        if stim_type == 'choice_time':
+            i = ch_inds[t] # Index of current trial choice in episode.
+        elif stim_type == 'outcome_time':
+            i = ss_inds[t] # Index of current trial second-step in episode.
+        # Compute gradients due to opto stim.
+        with tf.GradientTape() as tape:
+                # Critic loss.
+                tr_action_probs, tr_value = Str_model(
+                    [one_hot(states[i], task.n_states)[np.newaxis,:], pfc_states[i][np.newaxis,:]]) # Action probs and values for single trial.
+                critic_loss = -2*stim_strength*tr_value
+                # Actor loss.
+                log_chosen_prob = tf.math.log(tr_action_probs[0,actions[i]])
+                actor_loss = -log_chosen_prob*stim_strength
+                # Compute gradients.
+                grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
+        # Update model weights.
+        SGD_optimiser.apply_gradients(zip(grads, Str_model.trainable_variables))
+        # Compute next trial choice probs.
+        j = ch_inds[t+1] # Index in episode of next trial choice.
+        nt_action_probs, _ = Str_model([one_hot(states[j], task.n_states)[np.newaxis,:], pfc_states[j][np.newaxis,:]])
+        choice_probs_stim[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
+        # Reset model weights.
+        Str_model.set_weights(orig_weights)
+        
+    # Normalise choice probs to sum to 1 (as non-choice actions have non-zero prob).
+    choice_probs_nons = choice_probs_nons/np.sum(choice_probs_nons,0)
+    choice_probs_stim = choice_probs_stim/np.sum(choice_probs_stim,0)
+    
+    # Compute stay probabilities
+    stay_probs_nons = choice_probs_nons[choices[:-1].astype(int),np.arange(1,len(choices))]
+    stay_probs_stim = choice_probs_stim[choices[:-1].astype(int),np.arange(1,len(choices))]
+    
+    # Make dataframe with predictors sum-to-zero coded (-1,1).
+    df_nons = pd.DataFrame({'outcome':2*(outcomes[:-1]-0.5),'transition':2*(transitions[:-1]-0.5),
+                            'stim':-1,'stay_prob': stay_probs_nons,'logit_stay_prob':logit(stay_probs_nons)})
+    df_stim = pd.DataFrame({'outcome':2*(outcomes[:-1]-0.5),'transition':2*(transitions[:-1]-0.5),
+                            'stim':1, 'stay_prob': stay_probs_stim,'logit_stay_prob':logit(stay_probs_stim)})
+    
+    include_trials = df_nons['stay_prob'].between(0.01,0.99) # Exclude trials with stay probs very close to 0 or 1 to avoid floor/ceiling effects.
+    df_nons = df_nons.loc[include_trials,:]
+    df_stim = df_stim.loc[include_trials,:]
+    
+    return pd.concat([df_nons, df_stim])
+
+def _plot_opto_fits(fits_df, ax, xticklabels):
+    '''Plot the fit of a linear regression analysis of opto-stim simulation.'''
+    fits_df = fits_df*2 # Convert to log odds (as predictors are +1,-1).
+    x = np.arange(fits_df.shape[1])
+    ax.axhline(0,c='k', linewidth=0.5)
+    sns.stripplot(data=fits_df, color='k', size=2, axes=ax)
+    ax.errorbar(x,fits_df.mean(), fits_df.sem(),linestyle='none', linewidth=2, color='r')
+    if xticklabels:
+        ax.set_xticklabels(fits_df.columns.to_list(),rotation=-45, ha='left', rotation_mode='anchor')
+        ax.set_ylabel('Δ stay probability (log odds)')
+    else:
+        plt.setp(ax.get_xticklabels(), visible=False)
+    
+    ttest = ttest_1samp(fits_df,0)
+    stats_df = pd.DataFrame({'predictor': fits_df.columns.to_list(),'t':ttest.statistic,'pvalue':ttest.pvalue})
+    print(stats_df)
+
+
+    

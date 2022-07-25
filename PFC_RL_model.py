@@ -125,8 +125,8 @@ def run_simulation(save_dir=default_dir, pm=default_params):
             step_n += 1
             
             # Choose action.
-            choice_probs, V = Str_model([one_hot(s, task.n_states)[None,:], pfc_s])
-            a = np.random.choice(task.n_actions, p=np.squeeze(choice_probs))
+            action_probs, V = Str_model([one_hot(s, task.n_states)[None,:], pfc_s])
+            a = np.random.choice(task.n_actions, p=np.squeeze(action_probs))
             
             # Store history.
             store_trial_data(s, r, a, pfc_s, V)
@@ -160,11 +160,11 @@ def run_simulation(save_dir=default_dir, pm=default_params):
               
         with tf.GradientTape() as tape: # Calculate gradients
             # Critic loss.
-            choice_probs_g, values_g = Str_model([one_hot(states, task.n_states), np.vstack(pfc_states)]) # Gradient of these is tracked wrt Str_model weights.
+            action_probs_g, values_g = Str_model([one_hot(states, task.n_states), np.vstack(pfc_states)]) # Gradient of these is tracked wrt Str_model weights.
             critic_loss = sse_loss(values_g, returns)
             # Actor loss.
-            log_chosen_probs = tf.math.log(tf.gather_nd(choice_probs_g, [[i,a] for i,a in enumerate(actions)]))
-            entropy = -tf.reduce_sum(choice_probs_g*tf.math.log(choice_probs_g),1)
+            log_chosen_probs = tf.math.log(tf.gather_nd(action_probs_g, [[i,a] for i,a in enumerate(actions)]))
+            entropy = -tf.reduce_sum(action_probs_g*tf.math.log(action_probs_g),1)
             actor_loss = tf.reduce_sum(-log_chosen_probs*advantages-entropy*pm['entropy_loss_weight'])
             # Apply gradients
             grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)

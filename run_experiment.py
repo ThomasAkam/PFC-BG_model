@@ -3,7 +3,7 @@ from concurrent.futures import ProcessPoolExecutor
 
 import PFC_RL_model as md
 
-def run_experiment(exp_dir=os.path.join('..','data','experiment08'), n_runs=8, n_processes=4):
+def run_experiment(exp_dir=os.path.join('..','data','experiment08_16'), n_runs=18, n_processes=6):
     '''Run an experiment comprising multiple simulation runs in parallel and save the data to disk.'''
     if not os.path.exists(exp_dir):
             os.mkdir(exp_dir)
