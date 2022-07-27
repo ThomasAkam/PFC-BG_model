@@ -297,7 +297,7 @@ def plot_PFC_choice_state_activity_exp(experiment_data, fig_no=2):
   
 # Simulate optogenetic manipulation. ------------------------------------------
 
-def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
+def opto_stim_analysis(experiment_data, stim_strength=1, last_n=10, fig_no=1):
     '''Evaluate effect of simulated optogenetic stimulation of stay proabilities for
     the last_n episoces of each run in experiment.''' 
     # Simulate choice and outcome time stimulation for each experiment run and analyse effects with linear regression.
@@ -310,8 +310,8 @@ def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
         episode_cs_dfs = []
         episode_os_dfs = []
         for ep in run_data.episode_buffer[-last_n:]:
-            episode_cs_dfs.append(_opto_stay_probs(run_data.Str_model, ep, run_data.task, 'choice_time' , stim_strength))
-            episode_os_dfs.append(_opto_stay_probs(run_data.Str_model, ep, run_data.task, 'outcome_time', stim_strength))
+            episode_cs_dfs.append(_opto_stay_probs(run_data, ep, 'choice_time' , stim_strength))
+            episode_os_dfs.append(_opto_stay_probs(run_data, ep, 'outcome_time', stim_strength))
         choice_stim_df  = pd.concat(episode_cs_dfs)
         outcome_stim_df = pd.concat(episode_os_dfs)
 
@@ -330,14 +330,13 @@ def opto_stim_analysis(experiment_data, stim_strength=2, last_n=10, fig_no=1):
     print('\nChoice time stim:')
     _plot_opto_fits(outcome_stim_fits, ax2, xticklabels=True)
     plt.tight_layout()
-    
-    return choice_stim_fits, outcome_stim_fits
-    
+
  
-def _opto_stay_probs(Str_model, ep, task, stim_type, stim_strength):
+def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
     '''Evalute how training the striatum model using gradients due to opto RPE
     on individual trials affects stay probability for one episode (ep).''' 
     
+    Str_model, task, params = (run_data.Str_model, run_data.task, run_data.params)
     choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
     orig_weights = Str_model.get_weights()
     
@@ -347,7 +346,7 @@ def _opto_stay_probs(Str_model, ep, task, stim_type, stim_strength):
 
     # Compute A/B choice probabilities following opto stim on individual trials.    
     choice_probs_stim = np.ones(choice_probs_nons.shape)
-    SGD_optimiser = keras.optimizers.SGD(learning_rate=0.01)
+    SGD_optimiser = keras.optimizers.SGD(learning_rate=params['str_learning_rate'])
     for t in range(choice_probs_nons.shape[1]-1): # Loop over trials.
         if stim_type == 'choice_time':
             i = ch_inds[t] # Index of current trial choice in episode.
@@ -361,7 +360,8 @@ def _opto_stay_probs(Str_model, ep, task, stim_type, stim_strength):
                 critic_loss = -2*stim_strength*tr_value
                 # Actor loss.
                 log_chosen_prob = tf.math.log(tr_action_probs[0, ep.actions[i]])
-                actor_loss = -log_chosen_prob*stim_strength
+                entropy = -tf.reduce_sum(tr_action_probs*tf.math.log(tr_action_probs))
+                actor_loss = -log_chosen_prob*stim_strength-entropy*params['entropy_loss_weight']
                 # Compute gradients.
                 grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
         # Update model weights.

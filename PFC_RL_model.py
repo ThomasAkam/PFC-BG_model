@@ -15,7 +15,7 @@ import analysis as an
 one_hot = keras.utils.to_categorical
 sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
-Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_inputs', 'pfc_states', 'values', 'pred_states', 'n_trials'])
+Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_inputs', 'pfc_states', 'pred_states','task_rew_states', 'n_trials'])
 
 #%% Parameters.
 
@@ -34,13 +34,14 @@ default_params = {
     'n_back': 30, # Length of history provided as input.
     'n_pfc' : 16,  # Number of PFC units
     'pfc_learning_rate' : 0.01,
+    'pred_rewarded_only' : False, # If True PFC input (and prediction target) is rewarded states only.
 
     # Striatum model params.
     'n_str' : 10, # Number of striatum units
     'str_learning_rate' : 0.05,
     'entropy_loss_weight' : 0.05}
 
-default_dir = os.path.join('..','data','test_run2') 
+default_dir = os.path.join('..','data','test_run') # Default directory to save data.
 
 #%% Run simulation.
 
@@ -51,23 +52,29 @@ def run_simulation(save_dir=default_dir, pm=default_params):
     
     # PFC model.
     
-    state_action = layers.Input(shape=(pm['n_back'], task.n_states+task.n_actions)) # PFC inputs are 1 hot encoding of states and actions.
-    rnn = layers.GRU(pm['n_pfc'], unroll=True, name='rnn')(state_action) # Recurrent layer.
+    if pm['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
+        pfc_input_layer = layers.Input(shape=(pm['n_back'], task.n_states))
+        pfc_input_buffer = np.zeros([pm['n_back'], task.n_states], bool)
+    else: # PFC input is 1 hot encoding of observable state and previous action.
+        pfc_input_layer = layers.Input(shape=(pm['n_back'], task.n_states+task.n_actions)) 
+        pfc_input_buffer = np.zeros([pm['n_back'], task.n_states+task.n_actions], bool)
+    rnn = layers.GRU(pm['n_pfc'], unroll=True, name='rnn')(pfc_input_layer) # Recurrent layer.
     state_pred = layers.Dense(task.n_states, activation='softmax', name='state_pred')(rnn) # Output layer predicts next state
-    PFC_model = keras.Model(inputs=state_action, outputs=state_pred)
+    PFC_model = keras.Model(inputs=pfc_input_layer, outputs=state_pred)
     pfc_optimizer = keras.optimizers.Adam(learning_rate=pm['pfc_learning_rate'])
-    PFC_model.compile(loss="categorical_crossentropy", optimizer=pfc_optimizer)
+    PFC_model.compile(loss='mean_squared_error', optimizer=pfc_optimizer)
     Get_pfc_state = keras.Model(inputs=PFC_model.input, # Model variant used to get state of RNN layer.
                                  outputs=PFC_model.get_layer('rnn').output)
-    
-    pfc_input_buffer = np.zeros([pm['n_back'], task.n_states+task.n_actions], bool)
-    
-    def update_pfc_input(s,a):
-        '''Update the inputs to the PFC network given the state and action.'''
+
+    def update_pfc_input(a,s,r):
+        '''Update the inputs to the PFC network given the action, subsequent state and reward.'''
         pfc_input_buffer[:-1,:] = pfc_input_buffer[1:,:]
         pfc_input_buffer[-1,:] = 0
-        pfc_input_buffer[-1,s] = 1               # One hot encoding of state.
-        pfc_input_buffer[-1,a+task.n_states] = 1 # One hot encoding of action.
+        if pm['pred_rewarded_only']:
+            pfc_input_buffer[-1,s] = r # One hot encoding on state on rewarded timesteps, 0 vector on non-rewarded.
+        else:   
+            pfc_input_buffer[-1,s] = 1               # One hot encoding of state.
+            pfc_input_buffer[-1,a+task.n_states] = 1 # One hot encoding of action.
         
     def get_masked_PFC_inputs(pfc_inputs):
         '''Return array of PFC input history with the most recent state masked, 
@@ -99,6 +106,7 @@ def run_simulation(save_dir=default_dir, pm=default_params):
         pfc_inputs.append(pfc_input_buffer.copy())
         pfc_states.append(pfc_s)
         values.append(V)
+        task_rew_states.append(task.A_good)
         
     # Run model.
     
@@ -120,6 +128,7 @@ def run_simulation(save_dir=default_dir, pm=default_params):
         pfc_inputs = []    # (1,30,n_states+n_actions)
         pfc_states = []    # (1,n_pfc)
         values = []        # float
+        task_rew_states = [] # bool
            
         while True:
             step_n += 1
@@ -135,7 +144,7 @@ def run_simulation(save_dir=default_dir, pm=default_params):
             s, r = task.step(a)
             
             # Get new pfc state.
-            update_pfc_input(s,a)
+            update_pfc_input(a,s,r)
             # pfc_s = Get_pfc_state(pfc_input_buffer[np.newaxis,:,:])                # Get the PFC activity, slow but does not give error message.
             pfc_s = Get_pfc_state.predict_on_batch(pfc_input_buffer[np.newaxis,:,:]) # Get the PFC activity, fast and returns same result but gives an error message.
     
@@ -147,7 +156,7 @@ def run_simulation(save_dir=default_dir, pm=default_params):
         
         pred_states = np.argmax(PFC_model(get_masked_PFC_inputs(pfc_inputs)),1) # Used only for analysis.
         episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_inputs),
-                               np.vstack(pfc_states), np.vstack(values), np.array(pred_states), n_trials))
+                               np.vstack(pfc_states), np.array(pred_states), np.array(task_rew_states), n_trials))
         
         # Update striatum weights using advantage actor critic (A2C), Mnih et al. PMLR 48:1928-1937, 2016
         
@@ -171,9 +180,12 @@ def run_simulation(save_dir=default_dir, pm=default_params):
     
         str_optimizer.apply_gradients(zip(grads, Str_model.trainable_variables))
              
-        # Update PFC weights to better predict next observation.
-        
-        tl = PFC_model.train_on_batch(get_masked_PFC_inputs(pfc_inputs), one_hot(states, task.n_states))
+        # Update PFC weights.
+
+        if pm['pred_rewarded_only']: # PFC is trained to predict its current input given previous input.
+            tl = PFC_model.train_on_batch(np.array(pfc_inputs[:-1]), one_hot(states[1:], task.n_states)*np.array(rewards)[1:,np.newaxis])
+        else: # PFC is trained to predict the current state given previous action and state.
+            tl = PFC_model.train_on_batch(get_masked_PFC_inputs(pfc_inputs), one_hot(states, task.n_states))
             
         print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
               f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
