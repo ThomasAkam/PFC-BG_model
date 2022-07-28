@@ -28,7 +28,7 @@ default_params = {
 
     #Task params.
     'good_prob' : 0.8,
-    'block_len' : [20,21],
+    'block_len' : [20,40],
 
     # PFC model params.
     'n_back': 30, # Length of history provided as input.
@@ -191,10 +191,6 @@ def run_simulation(save_dir=default_dir, pm=default_params):
               f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl :.3f}')
         
         if e % 10 == 9: an.plot_performance(episode_buffer, task)
-    
-    # Plotting at end of run.
-            
-    an.make_plots(episode_buffer, task, Str_model, PFC_model)
         
     # Save data.    
     
