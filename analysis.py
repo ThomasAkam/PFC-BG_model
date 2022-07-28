@@ -60,7 +60,6 @@ def ave_reward_rate(run_data, last_n=10, return_p_value=False):
     else:
         return np.mean(episode_reward_rates) #
         
-
 # Multi-analysis functions
 
 def make_plots(episode_buffer, task, Str_model, PFC_model):
@@ -128,7 +127,9 @@ def plot_performance(episode_buffer, task, fig_no=1):
     
 def stay_probability_analysis(episode_buffer, last_n=10, return_means=False, fig_no=2):
     '''Standard two-step task stay probability analysis for a single simulation run.'''
+    # Compute stay probabilities.
     stay_probs = []
+    dfs = []
     for ep in episode_buffer[-last_n:]:
         choices, sec_steps, transitions, outcomes = _get_CSTO(ep)
         stays = choices[1:] == choices[:-1]
@@ -137,17 +138,25 @@ def stay_probability_analysis(episode_buffer, last_n=10, return_means=False, fig
         sp_comm_non = np.mean(stays[ transitions[:-1] & ~outcomes[:-1]])
         sp_rare_non = np.mean(stays[~transitions[:-1] & ~outcomes[:-1]])
         stay_probs.append(np.array([sp_comm_rew, sp_rare_rew, sp_comm_non, sp_rare_non]))
+        dfs.append(pd.DataFrame({'transition': transitions[:-1]-0.5,
+                                    'outcome'   : outcomes[:-1]-0.5,
+                                    'stay'      : stays.astype(int)}))
+    fit = smf.logit(formula='stay ~ transition*outcome', data=pd.concat(dfs)).fit(disp=False).params
     if return_means:
-        return np.mean(stay_probs,0)
+        return np.mean(stay_probs,0), fit
     else:
         _stay_probability_plot(np.array(stay_probs), fig_no)
       
 def stay_probability_analysis_exp(experiment_data, fig_no=2):
     '''Stay probability analysis for an experiment comprising mulitple simulation runs.'''
     stay_probs = np.zeros([len(experiment_data),4])
+    fits = []
     for i, run_data in enumerate(experiment_data):
-        stay_probs[i,:] = stay_probability_analysis(run_data.episode_buffer, return_means=True)
+        stay_probs[i,:], fit = stay_probability_analysis(run_data.episode_buffer, return_means=True)
+        fits.append(fit)
     _stay_probability_plot(stay_probs, fig_no)
+    fits_df = pd.concat([fit.to_frame().T for fit in fits])
+    _regression_fit_stats(fits_df)
     
 def _stay_probability_plot(stay_probs, fig_no):
     plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
@@ -269,13 +278,17 @@ def _sec_step_value_analysis_plot(value_updates, fig_no):
 def plot_PFC_choice_state_activity(episode_buffer, task, last_n=3, fig_no=4):
     '''Plot the first principle component of variation in the PFC activity in the choice state across trials'''
     ch_state_PFC_activity = []
+    task_rew_state = []
     for ep in episode_buffer[-last_n:]:
         ch_state_PFC_activity.append(ep.pfc_states[ep.states==ts.choice])
+        task_rew_state.append(ep.task_rew_states[ep.states==ts.choice])
     ch_state_PFC_activity = np.vstack(ch_state_PFC_activity) 
+    task_rew_state = np.hstack(task_rew_state)
     PC1 = PCA(n_components=1).fit(ch_state_PFC_activity).transform(ch_state_PFC_activity)
-    if not fig_no: return PC1
+    if not fig_no: return PC1, task_rew_state
     plt.figure(fig_no, clear=True)
-    plt.plot(PC1)
+    plt.plot(PC1, 'b')
+    plt.plot(task_rew_state+2,'r')
     plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
     plt.xlim(0,len(PC1))
@@ -286,9 +299,10 @@ def plot_PFC_choice_state_activity_exp(experiment_data, fig_no=2):
     n_runs = len(experiment_data)
     plt.figure(fig_no, clear=True)
     for i, run_data in enumerate(experiment_data):
-        PC1 = plot_PFC_choice_state_activity(run_data.episode_buffer, run_data.task, fig_no=False)
+        PC1, task_rew_state = plot_PFC_choice_state_activity(run_data.episode_buffer, run_data.task, fig_no=False)
         plt.subplot(n_runs,1,i+1)
         plt.plot(PC1)
+        plt.plot(task_rew_state+2,'r')
         plt.xlim(0,len(PC1))
         if i == n_runs//2:
             plt.ylabel('First principle component of\nchoice state PFC activity')
@@ -324,10 +338,10 @@ def opto_stim_analysis(experiment_data, stim_strength=1, last_n=10, fig_no=1):
 
     plt.figure(fig_no,clear=True)
     ax1 = plt.subplot(2,1,1)
-    print('\nChoice time stim:')
+    print('\n\nChoice time stim:')
     _plot_opto_fits(choice_stim_fits, ax1, xticklabels=False)
     ax2 = plt.subplot(2,1,2, sharex=ax1, sharey=ax1)
-    print('\nChoice time stim:')
+    print('\nOutcome time stim:')
     _plot_opto_fits(outcome_stim_fits, ax2, xticklabels=True)
     plt.tight_layout()
 
@@ -393,7 +407,7 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
     
     return pd.concat([df_nons, df_stim])
 
-def _plot_opto_fits(fits_df, ax, xticklabels):
+def _plot_opto_fits(fits_df, ax, xticklabels=True):
     '''Plot the fit of a linear regression analysis of opto-stim simulation.'''
     fits_df = fits_df*2 # Convert to log odds (as predictors are +1,-1).
     x = np.arange(fits_df.shape[1])
@@ -406,9 +420,11 @@ def _plot_opto_fits(fits_df, ax, xticklabels):
     else:
         plt.setp(ax.get_xticklabels(), visible=False)
     
+    _regression_fit_stats(fits_df)
+
+def _regression_fit_stats(fits_df):
     ttest = ttest_1samp(fits_df,0)
-    stats_df = pd.DataFrame({'predictor': fits_df.columns.to_list(),'t':ttest.statistic,'pvalue':ttest.pvalue})
-    print(stats_df)
-
-
-    
+    sigstars = ['***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else '' for p in ttest.pvalue]    
+    stats_df = pd.DataFrame({'coef.':fits_df.mean(),'t':ttest.statistic,
+                             'pvalue':ttest.pvalue, 'sig.': sigstars})
+    print(stats_df.round(4))
