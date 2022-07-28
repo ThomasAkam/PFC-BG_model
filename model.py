@@ -9,7 +9,7 @@ from tensorflow import keras
 from tensorflow.keras import layers
 from collections import namedtuple
 
-import Two_step_task as ts
+import two_step_task as ts
 import analysis as an
 
 one_hot = keras.utils.to_categorical
@@ -34,7 +34,7 @@ default_params = {
     'n_back': 30, # Length of history provided as input.
     'n_pfc' : 16,  # Number of PFC units
     'pfc_learning_rate' : 0.01,
-    'pred_rewarded_only' : False, # If True PFC input (and prediction target) is rewarded states only.
+    'pred_rewarded_only' : True, # If True PFC input (and prediction target) is rewarded states only.
 
     # Striatum model params.
     'n_str' : 10, # Number of striatum units

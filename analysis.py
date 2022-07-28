@@ -15,7 +15,7 @@ from sklearn.decomposition import PCA
 from tensorflow import keras
 from collections import namedtuple
 
-import Two_step_task as ts
+import two_step_task as ts
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rc("axes.spines", top=False, right=False)
