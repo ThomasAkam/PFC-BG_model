@@ -11,6 +11,7 @@ import tensorflow as tf
 import statsmodels.formula.api as smf
 from scipy.special import logit
 from scipy.stats import ttest_1samp, sem
+from statsmodels.stats.proportion import proportions_ztest
 from sklearn.decomposition import PCA
 from tensorflow import keras
 from collections import namedtuple
@@ -44,20 +45,32 @@ def load_experiment(exp_dir, good_only=True):
    significantly higher than 0.5 are returned.'''
     run_dirs = os.listdir(exp_dir)
     experiment_data = [load_run(os.path.join(exp_dir, run_dir)) for run_dir in run_dirs]
-    #if good_only:
-    #    experiment_data = [run_data for run_data in experiment_data 
-    #                       if ave_reward_rate(run_data, return_p_value=True) < 0.05]
+    if good_only:
+        experiment_data = [run_data for run_data in experiment_data 
+                           if ave_reward_rate(run_data, return_p_value=True) < 0.05]
     return experiment_data
+
+def ave_reward_rate(run_data, last_n=10, return_p_value=False):
+    '''Compute the average reward rate over the last_n episodes of a run and 
+    return either reward rate or P value for difference from 0.5.'''
+    n_rewards, n_trials = (0,0)
+    for ep in run_data.episode_buffer[-last_n:]:
+        n_rewards += np.sum(ep.rewards)
+        n_trials  += ep.n_trials
+    if return_p_value:
+        return proportions_ztest(n_rewards,n_trials,0.5,'larger')[1]
+    return n_rewards/n_trials
 
 #%% Plot experiment
     
-def plot_experiment(experiment_data, last_n=10):
-    '''Load data for an experiment comprising multiple simulation runs and 
-    make plots showing cross run standard deviation.'''
-    stay_probability_analysis(experiment_data, last_n, fig_no=1)
-    second_step_value_update_analysis(experiment_data, last_n, fig_no=2)
-    plot_PFC_choice_state_activity(experiment_data, fig_no=3)
-    opto_stim_analysis(experiment_data, fig_no=4)
+def plot_experiment(experiment_data, last_n=10, save_dir=None):
+    '''Run set of analyses on data from an experiment comrising multiple simulation runs.'''
+    if save_dir and not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+    stay_probability_analysis(experiment_data, last_n, fig_no=1, save_dir=save_dir)
+    second_step_value_update_analysis(experiment_data, last_n, fig_no=2, save_dir=save_dir)
+    plot_PFC_choice_state_activity(experiment_data, fig_no=3, save_dir=save_dir)
+    opto_stim_analysis(experiment_data, fig_no=4, save_dir=save_dir)
 
 #%% Plot performance ----------------------------------------------------------
 
@@ -102,7 +115,7 @@ def plot_performance(episode_buffer, task, fig_no=1):
     
 #%% Stay probability analysis -------------------------------------------------
 
-def stay_probability_analysis(experiment_data, last_n=10, fig_no=1):
+def stay_probability_analysis(experiment_data, last_n=10, fig_no=1, save_dir=None):
     '''Plot stay probabilities and run logistic regression for stats.'''
     # Compute stay probs and logistic regression fit for each simulation run.
     stay_probs = np.zeros([len(experiment_data),4])
@@ -111,13 +124,14 @@ def stay_probability_analysis(experiment_data, last_n=10, fig_no=1):
         stay_probs[i,:], fit = _get_stay_probs(run_data.episode_buffer, last_n)
         fits.append(fit)
     # Plotting
-    plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
+    fig = plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
     plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=sem(stay_probs,0), ecolor='r')
     sns.stripplot(data=stay_probs, color='k', size=2)
     plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
     plt.tight_layout()
+    if save_dir: fig.savefig(os.path.join(save_dir,'stay_probabilities.pdf'))
     # Stats
     print('\nLogistic regression analysis of stay probabilities:')
     _ttest_v_0(pd.concat([fit.to_frame().T for fit in fits]))
@@ -182,7 +196,7 @@ def _get_CSTO(ep, return_inds=False):
     
 #%% Second step value update analysis -----------------------------------------
     
-def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2):
+def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save_dir=None):
     '''Plot the change in value of second-step states from one trial to the next as a function of the
     trial outcome and whether the second-step state on the next trial is the same or different.  
     Evaluates both second-step states on each trial by generating the apropriate input to the 
@@ -191,7 +205,7 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2):
     for i, run_data in enumerate(experiment_data):
         value_updates[i,:] = _get_value_updates(run_data, last_n)
     # Plotting
-    plt.figure(fig_no, figsize=[6.2,2.4], clear=True)
+    fig = plt.figure(fig_no, figsize=[6.2,2.4], clear=True)
     plt.subplot(1,2,1)
     sns.stripplot(data=value_updates, color='k', size=2)
     plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = sem(value_updates,0), ls='none', color='r', elinewidth=2)
@@ -210,6 +224,7 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2):
     plt.xlabel('State')
     plt.xlim(-0.5,1.5)
     plt.tight_layout()
+    if save_dir: fig.savefig(os.path.join(save_dir,'sec_step_value_updates.pdf'))
     # Stats
     print('\nEffect out outcome on same/different second-step state value:')
     _ttest_v_0(pd.DataFrame({'Same':reward_effect[:,0],'diff':reward_effect[:,1]}))
@@ -250,21 +265,22 @@ def _get_value_updates(run_data, last_n=10):
 
 #%% Plot PFC choice state activity --------------------------------------------
 
-def plot_PFC_choice_state_activity(experiment_data, fig_no=3):
+def plot_PFC_choice_state_activity(experiment_data, fig_no=3, save_dir=None):
     '''Plot the projection of PFC activity in the choice state across trials onto its first
     principal component'''
     n_runs = len(experiment_data)
-    plt.figure(fig_no, figsize=[6,9], clear=True)
+    fig = plt.figure(fig_no, figsize=[6,9], clear=True)
     for i, run_data in enumerate(experiment_data):
         PC1, task_rew_state = _get_PFC_activity(run_data.episode_buffer, run_data.task)
         plt.subplot(n_runs,1,i+1)
         plt.plot(PC1)
         plt.plot(task_rew_state+2,'r')
-        plt.xlim(0,len(PC1))
+        plt.xlim(0,300)
         plt.yticks([-1,0,1])
         if i == n_runs//2:
             plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
+    if save_dir: fig.savefig(os.path.join(save_dir,'PFC_choice_state_activity.pdf'))
     
 def _get_PFC_activity(episode_buffer, task, last_n=3):
     '''Get the projection of PFC activtiy in the choice state across trials onto
@@ -281,7 +297,7 @@ def _get_PFC_activity(episode_buffer, task, last_n=3):
          
 #%% Simulate optogenetic manipulation. ----------------------------------------
 
-def opto_stim_analysis(experiment_data, last_n=10, stim_strength=1, fig_no=4):
+def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, save_dir=None):
     '''Evaluate effect of simulated optogenetic stimulation of stay proabilities for
     the last_n episoces of each run in experiment.''' 
     # Simulate choice and outcome time stimulation for each experiment run and analyse effects with linear regression.
@@ -303,17 +319,20 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=1, fig_no=4):
         choice_stim_fits.append( smf.ols(formula='logit_stay_prob ~ transition*outcome*stim', data=choice_stim_df ).fit().params)
         outcome_stim_fits.append(smf.ols(formula='logit_stay_prob ~ transition*outcome*stim', data=outcome_stim_df).fit().params)
 
-    choice_stim_fits  = pd.concat([fit.to_frame().T for fit in choice_stim_fits])
-    outcome_stim_fits = pd.concat([fit.to_frame().T for fit in outcome_stim_fits])
+    choice_stim_fits  = pd.concat([fit.to_frame().T for fit in choice_stim_fits ])*2 # Multiply by 2 to convert to log odds (as predictors are +1,-1).
+    outcome_stim_fits = pd.concat([fit.to_frame().T for fit in outcome_stim_fits])*2
     
     # Plotting
-    plt.figure(fig_no, figsize=[4,4], clear=True)
+    fig = plt.figure(fig_no, figsize=[4,4], clear=True)
     ax1 = plt.subplot(2,1,1)
     _plot_opto_fits(choice_stim_fits, ax1, xticklabels=False)
     ax2 = plt.subplot(2,1,2, sharex=ax1, sharey=ax1)
     _plot_opto_fits(outcome_stim_fits, ax2, xticklabels=True)
     plt.xlim(3.5,7.5)
+    plt.ylim(-0.5,0.5)
     plt.tight_layout()
+    fig.text(0.05,0.05, f'Stim_strength:{stim_strength}', fontsize=9)
+    if save_dir: fig.savefig(os.path.join(save_dir,'opto_stim_analysis.pdf'))
     # Stats
     print('\n\nChoice time stim:')
     _ttest_v_0(choice_stim_fits)
@@ -382,7 +401,6 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
 
 def _plot_opto_fits(fits_df, ax, xticklabels=True):
     '''Plot the fit of a linear regression analysis of opto-stim simulation.'''
-    fits_df = fits_df*2 # Convert to log odds (as predictors are +1,-1).
     x = np.arange(fits_df.shape[1])
     ax.axhline(0,c='k', linewidth=0.5)
     sns.stripplot(data=fits_df, color='k', size=2, axes=ax)
