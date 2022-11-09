@@ -34,18 +34,18 @@ default_params = {
     'n_back': 30, # Length of history provided as input.
     'n_pfc' : 16,  # Number of PFC units
     'pfc_learning_rate' : 0.01,
-    'pred_rewarded_only' : True, # If True PFC input (and prediction target) is rewarded states only.
+    'pred_rewarded_only' : False, # If True PFC input (and prediction target) is rewarded states only.
 
     # Striatum model params.
     'n_str' : 10, # Number of striatum units
     'str_learning_rate' : 0.05,
     'entropy_loss_weight' : 0.05}
 
-default_dir = os.path.join('..','data','test_run') # Default directory to save data.
-
 #%% Run simulation.
 
-def run_simulation(save_dir=default_dir, pm=default_params):
+def run_simulation(save_dir=None, pm=default_params):
+    # Initialise random seed to ensure runs using multiprocessing use different random numbers.
+    np.random.seed(int.from_bytes(os.urandom(4), 'little'))
 
     #Instantiate task.
     task = ts.Two_step(good_prob=pm['good_prob'], block_len=pm['block_len'])
