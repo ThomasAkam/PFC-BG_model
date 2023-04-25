@@ -163,9 +163,9 @@ def _get_stay_probs(episode_buffer, last_n):
         sp_comm_non = np.mean(stays[ transitions[:-1] & ~outcomes[:-1]])
         sp_rare_non = np.mean(stays[~transitions[:-1] & ~outcomes[:-1]])
         stay_probs.append(np.array([sp_comm_rew, sp_rare_rew, sp_comm_non, sp_rare_non]))
-        dfs.append(pd.DataFrame({'transition': transitions[:-1]-0.5,
-                                    'outcome'   : outcomes[:-1]-0.5,
-                                    'stay'      : stays.astype(int)}))
+        dfs.append(pd.DataFrame({'transition': 2*(transitions[:-1]-0.5), # (-1,1) coding
+                                 'outcome'   : 2*(outcomes[:-1]-0.5),    # (-1,1) coding
+                                 'stay'      : stays.astype(int)}))
     fit = smf.logit(formula='stay ~ transition*outcome', data=pd.concat(dfs)).fit(disp=False).params
     return np.nanmean(stay_probs,0), fit
     
