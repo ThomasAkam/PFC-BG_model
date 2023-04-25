@@ -13,6 +13,7 @@ sec_step_B = 2
 choose_A = 3
 choose_B = 4
 
+#State IDs
 choice = 3
 reward_A = 4
 reward_B = 5

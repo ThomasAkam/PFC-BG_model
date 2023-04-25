@@ -64,14 +64,25 @@ def ave_reward_rate(run_data, last_n=10, return_p_value=False):
 #%% Plot experiment
     
 def plot_experiment(experiment_data, last_n=10, save_dir=None):
-    '''Run set of analyses on data from an experiment comrising multiple simulation runs.'''
+    '''Run set of analyses on data from an experiment comrising multiple simulation runs.
+    If save_dir is specified then the plots, statistics and simulation paramters are 
+    saved to this directory.'''
     if save_dir and not os.path.exists(save_dir):
         os.mkdir(save_dir)
+        with open(os.path.join(save_dir,'params.txt'), 'w') as f:
+            json.dump(experiment_data[0].params, f, indent=4)    
     stay_probability_analysis(experiment_data, last_n, fig_no=1, save_dir=save_dir)
     second_step_value_update_analysis(experiment_data, last_n, fig_no=2, save_dir=save_dir)
     plot_PFC_choice_state_activity(experiment_data, fig_no=3, save_dir=save_dir)
     opto_stim_analysis(experiment_data, fig_no=4, save_dir=save_dir)
-
+    
+def _statsprint(s, save_dir):
+    '''Print text s to file 'stats.txt' in save_dir and screen.'''
+    print(s)
+    if save_dir:
+        with open(os.path.join(save_dir,'stats.txt'), 'a') as f:
+            f.write(str(s)+'\n')
+    
 #%% Plot performance ----------------------------------------------------------
 
 def plot_performance(episode_buffer, task, fig_no=1):
@@ -122,7 +133,8 @@ def stay_probability_analysis(experiment_data, last_n=10, fig_no=1, save_dir=Non
     fits = []
     for i, run_data in enumerate(experiment_data):
         stay_probs[i,:], fit = _get_stay_probs(run_data.episode_buffer, last_n)
-        fits.append(fit)
+        if np.max(stay_probs[i,:]) < 1: # Logistic regression will not converge if any stay probs are 1.
+            fits.append(fit)
     # Plotting
     fig = plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
     plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=sem(stay_probs,0), ecolor='r')
@@ -133,8 +145,9 @@ def stay_probability_analysis(experiment_data, last_n=10, fig_no=1, save_dir=Non
     plt.tight_layout()
     if save_dir: fig.savefig(os.path.join(save_dir,'stay_probabilities.pdf'))
     # Stats
-    print('\nLogistic regression analysis of stay probabilities:')
-    _ttest_v_0(pd.concat([fit.to_frame().T for fit in fits]))
+    _statsprint('Logistic regression analysis of stay probabilities:', save_dir)
+    _ttest_v_0(pd.concat([fit.to_frame().T for fit in fits]), save_dir)
+    #return fits
     
 def _get_stay_probs(episode_buffer, last_n):
     '''Compute stay probabilities and logistic regression fit for the last_n
@@ -154,7 +167,7 @@ def _get_stay_probs(episode_buffer, last_n):
                                     'outcome'   : outcomes[:-1]-0.5,
                                     'stay'      : stays.astype(int)}))
     fit = smf.logit(formula='stay ~ transition*outcome', data=pd.concat(dfs)).fit(disp=False).params
-    return np.mean(stay_probs,0), fit
+    return np.nanmean(stay_probs,0), fit
     
 def _get_CSTO(ep, return_inds=False):
     '''Get the choices, second step states, transitions and outcomes for one episode as
@@ -226,8 +239,8 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save
     plt.tight_layout()
     if save_dir: fig.savefig(os.path.join(save_dir,'sec_step_value_updates.pdf'))
     # Stats
-    print('\nEffect out outcome on same/different second-step state value:')
-    _ttest_v_0(pd.DataFrame({'Same':reward_effect[:,0],'diff':reward_effect[:,1]}))
+    _statsprint('\nEffect out outcome on same/different second-step state value:', save_dir)
+    _ttest_v_0(pd.DataFrame({'Same':reward_effect[:,0],'diff':reward_effect[:,1]}), save_dir)
 
 def _get_value_updates(run_data, last_n=10):
     '''Compute the change in second-step values from one trial to the next for one simulation run.'''
@@ -269,32 +282,40 @@ def plot_PFC_choice_state_activity(experiment_data, fig_no=3, save_dir=None):
     '''Plot the projection of PFC activity in the choice state across trials onto its first
     principal component'''
     n_runs = len(experiment_data)
-    fig = plt.figure(fig_no, figsize=[6,9], clear=True)
+    fig = plt.figure(fig_no, figsize=[4,11], clear=True)
     for i, run_data in enumerate(experiment_data):
-        PC1, task_rew_state = _get_PFC_activity(run_data.episode_buffer, run_data.task)
+        PC1, task_rew_state, choices = _get_PFC_activity(run_data.episode_buffer, run_data.task)  
         plt.subplot(n_runs,1,i+1)
         plt.plot(PC1)
-        plt.plot(task_rew_state+2,'r')
+        plt.plot(task_rew_state*0.75+2.25,'g')
+        plt.plot(choices*0.75-3, '.r', ms=2)
         plt.xlim(0,300)
         plt.yticks([-1,0,1])
         if i == n_runs//2:
             plt.ylabel('First principle component of\nchoice state PFC activity')
     plt.xlabel('Trials')
+    plt.tight_layout()
     if save_dir: fig.savefig(os.path.join(save_dir,'PFC_choice_state_activity.pdf'))
     
 def _get_PFC_activity(episode_buffer, task, last_n=3):
     '''Get the projection of PFC activtiy in the choice state across trials onto
-    its first principal component.'''
+    its first principal component.  Also returns the trial-by-trial state of the
+    task's reward probabilities and the models choices.'''
     ch_state_PFC_activity = []
     task_rew_state = []
+    choices = []
     for ep in episode_buffer[-last_n:]:
         ch_state_PFC_activity.append(ep.pfc_states[ep.states==ts.choice])
         task_rew_state.append(ep.task_rew_states[ep.states==ts.choice])
+        choices.append(ep.actions[ep.states==ts.choice] == ts.choose_A)
     ch_state_PFC_activity = np.vstack(ch_state_PFC_activity) 
-    task_rew_state = np.hstack(task_rew_state)
     PC1 = PCA(n_components=1).fit(ch_state_PFC_activity).transform(ch_state_PFC_activity)
-    return PC1, task_rew_state
-         
+    task_rew_state = np.hstack(task_rew_state) 
+    choices = np.hstack(choices)
+    return PC1, task_rew_state, choices
+
+
+
 #%% Simulate optogenetic manipulation. ----------------------------------------
 
 def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, save_dir=None):
@@ -323,7 +344,7 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, 
     outcome_stim_fits = pd.concat([fit.to_frame().T for fit in outcome_stim_fits])*2
     
     # Plotting
-    fig = plt.figure(fig_no, figsize=[4,4], clear=True)
+    fig = plt.figure(fig_no, figsize=[3.7,3.2], clear=True)
     ax1 = plt.subplot(2,1,1)
     _plot_opto_fits(choice_stim_fits, ax1, xticklabels=False)
     ax2 = plt.subplot(2,1,2, sharex=ax1, sharey=ax1)
@@ -334,10 +355,10 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, 
     fig.text(0.05,0.05, f'Stim_strength:{stim_strength}', fontsize=9)
     if save_dir: fig.savefig(os.path.join(save_dir,'opto_stim_analysis.pdf'))
     # Stats
-    print('\n\nChoice time stim:')
-    _ttest_v_0(choice_stim_fits)
-    print('\nOutcome time stim:')
-    _ttest_v_0(outcome_stim_fits)
+    _statsprint('\n\nOpto stim analysis.\n\nChoice time stim:', save_dir)
+    _ttest_v_0(choice_stim_fits, save_dir)
+    _statsprint('\nOutcome time stim:', save_dir)
+    _ttest_v_0(outcome_stim_fits, save_dir)
 
 def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
     '''Evalute how training the striatum model using gradients due to opto RPE
@@ -411,10 +432,11 @@ def _plot_opto_fits(fits_df, ax, xticklabels=True):
     else:
         plt.setp(ax.get_xticklabels(), visible=False)
 
-def _ttest_v_0(df):
+def _ttest_v_0(df, save_dir):
     '''T-test whether the distribution of values in each column of data frame is significantly different from 0.'''
     ttest = ttest_1samp(df,0)
     sigstars = ['***' if p < 0.001 else '**' if p < 0.01 else '*' if p < 0.05 else ''
                 for p in ttest.pvalue]    
-    print(pd.DataFrame({'mean':df.mean(),'std':df.std(),'t':ttest.statistic,
-                        'pvalue':ttest.pvalue, 'sig.': sigstars}).round(4))
+    _statsprint(pd.DataFrame({'mean':df.mean(),'std':df.std(),'t':ttest.statistic,
+                'pvalue':ttest.pvalue, 'sig.': sigstars}).round(4), save_dir)
+    
