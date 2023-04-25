@@ -138,7 +138,7 @@ def stay_probability_analysis(experiment_data, last_n=10, fig_no=1, save_dir=Non
     # Plotting
     fig = plt.figure(fig_no, figsize=[2.8,2.4], clear=True)
     plt.bar(np.arange(4), np.mean(stay_probs,0), yerr=sem(stay_probs,0), ecolor='r')
-    sns.stripplot(data=stay_probs, color='k', size=2)
+    sns.stripplot(data=stay_probs, color='grey', size=2)
     plt.xticks(np.arange(4), ['CR', 'RR', 'CN', 'RN'])
     plt.ylim(ymin=0)
     plt.ylabel('Stay probability')
@@ -220,7 +220,7 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save
     # Plotting
     fig = plt.figure(fig_no, figsize=[6.2,2.4], clear=True)
     plt.subplot(1,2,1)
-    sns.stripplot(data=value_updates, color='k', size=2)
+    sns.stripplot(data=value_updates, color='grey', size=2)
     plt.errorbar(np.arange(4), np.mean(value_updates,0), yerr = sem(value_updates,0), ls='none', color='r', elinewidth=2)
     plt.xticks(np.arange(4), ['Rew same', 'Rew diff', 'Non same', 'Non diff'])
     plt.axhline(0,c='k',lw=0.5)
@@ -229,7 +229,7 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save
     plt.xlabel('Trial outcome')
     plt.subplot(1,2,2)
     reward_effect = value_updates[:,:2]-value_updates[:,2:]
-    sns.stripplot(data=reward_effect, color='k', size=2)
+    sns.stripplot(data=reward_effect, color='grey', size=2)
     plt.errorbar(np.arange(2), np.mean(reward_effect,0), yerr=sem(reward_effect,0), ls='none', color='r', elinewidth=2)
     plt.xticks(np.arange(2), ['same', 'diff'])
     plt.axhline(0,c='k',lw=0.5)
@@ -318,7 +318,7 @@ def _get_PFC_activity(episode_buffer, task, last_n=3):
 
 #%% Simulate optogenetic manipulation. ----------------------------------------
 
-def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, save_dir=None):
+def opto_stim_analysis(experiment_data, last_n=10, stim_strength=1, stim_prob=0.25, fig_no=4, save_dir=None):
     '''Evaluate effect of simulated optogenetic stimulation of stay proabilities for
     the last_n episoces of each run in experiment.''' 
     # Simulate choice and outcome time stimulation for each experiment run and analyse effects with linear regression.
@@ -331,8 +331,8 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, 
         episode_cs_dfs = []
         episode_os_dfs = []
         for ep in run_data.episode_buffer[-last_n:]:
-            episode_cs_dfs.append(_opto_stay_probs(run_data, ep, 'choice_time' , stim_strength))
-            episode_os_dfs.append(_opto_stay_probs(run_data, ep, 'outcome_time', stim_strength))
+            episode_cs_dfs.append(_opto_stay_probs(run_data, ep, 'choice_time' , stim_strength, stim_prob))
+            episode_os_dfs.append(_opto_stay_probs(run_data, ep, 'outcome_time', stim_strength, stim_prob))
         choice_stim_df  = pd.concat(episode_cs_dfs)
         outcome_stim_df = pd.concat(episode_os_dfs)
 
@@ -350,7 +350,7 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, 
     ax2 = plt.subplot(2,1,2, sharex=ax1, sharey=ax1)
     _plot_opto_fits(outcome_stim_fits, ax2, xticklabels=True)
     plt.xlim(3.5,7.5)
-    plt.ylim(-0.5,0.5)
+    plt.ylim(-0.5,1)
     plt.tight_layout()
     fig.text(0.05,0.05, f'Stim_strength:{stim_strength}', fontsize=9)
     if save_dir: fig.savefig(os.path.join(save_dir,'opto_stim_analysis.pdf'))
@@ -360,7 +360,7 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=0.5, fig_no=4, 
     _statsprint('\nOutcome time stim:', save_dir)
     _ttest_v_0(outcome_stim_fits, save_dir)
 
-def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
+def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
     '''Evalute how training the striatum model using gradients due to opto RPE
     on individual trials affects stay probability for one episode (ep).''' 
     params, _, _, Str_model, task = run_data
@@ -369,12 +369,15 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
     
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
     action_probs = Str_model([one_hot(ep.states, task.n_states), tf.concat(ep.pfc_states,0)])[0].numpy()
-    choice_probs_nons = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
-
-    # Compute A/B choice probabilities following opto stim on individual trials.    
-    choice_probs_stim = np.ones(choice_probs_nons.shape)
+    choice_probs = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
+    
+    # Compute A/B choice probabilities following opto stim for randomly selected set of trials. 
+    stim_trials = np.random.rand(choice_probs.shape[1])<stim_prob
+    
     SGD_optimiser = keras.optimizers.SGD(learning_rate=params['str_learning_rate'])
-    for t in range(choice_probs_nons.shape[1]-1): # Loop over trials.
+    for t, stim_trial in enumerate(stim_trials[:-1]): # Loop over trials.
+        if not stim_trial:
+            continue
         if stim_type == 'choice_time':
             i = ch_inds[t] # Index of current trial choice in episode.
         elif stim_type == 'outcome_time':
@@ -396,35 +399,29 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength):
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
         nt_action_probs, _ = Str_model([one_hot(ep.states[j], task.n_states)[np.newaxis,:], ep.pfc_states[j][np.newaxis,:]])
-        choice_probs_stim[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
+        choice_probs[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
         # Reset model weights.
         Str_model.set_weights(orig_weights)
         
     # Normalise choice probs to sum to 1 (as non-choice actions have non-zero prob).
-    choice_probs_nons = choice_probs_nons/np.sum(choice_probs_nons,0)
-    choice_probs_stim = choice_probs_stim/np.sum(choice_probs_stim,0)
+    choice_probs = choice_probs/np.sum(choice_probs,0)
     
     # Compute stay probabilities
-    stay_probs_nons = choice_probs_nons[choices[:-1].astype(int),np.arange(1,len(choices))]
-    stay_probs_stim = choice_probs_stim[choices[:-1].astype(int),np.arange(1,len(choices))]
+    stay_probs = choice_probs[choices[:-1].astype(int), np.arange(1,len(choices))]
     
     # Make dataframe with predictors sum-to-zero coded (-1,1).
-    df_nons = pd.DataFrame({'outcome':2*(outcomes[:-1]-0.5),'transition':2*(transitions[:-1]-0.5),
-                            'stim':-1,'stay_prob': stay_probs_nons,'logit_stay_prob':logit(stay_probs_nons)})
-    df_stim = pd.DataFrame({'outcome':2*(outcomes[:-1]-0.5),'transition':2*(transitions[:-1]-0.5),
-                            'stim':1, 'stay_prob': stay_probs_stim,'logit_stay_prob':logit(stay_probs_stim)})
-    
-    include_trials = df_nons['stay_prob'].between(0.01,0.99) # Exclude trials with stay probs very close to 0 or 1 to avoid floor/ceiling effects.
-    df_nons = df_nons.loc[include_trials,:]
-    df_stim = df_stim.loc[include_trials,:]
-    
-    return pd.concat([df_nons, df_stim])
+    df = pd.DataFrame({'outcome'   :2*(outcomes   [:-1]-0.5),
+                       'transition':2*(transitions[:-1]-0.5),
+                       'stim'      :2*(stim_trials[:-1]-0.5),
+                       'stay_prob' : stay_probs,
+                       'logit_stay_prob':logit(stay_probs)})
+    return df
 
 def _plot_opto_fits(fits_df, ax, xticklabels=True):
     '''Plot the fit of a linear regression analysis of opto-stim simulation.'''
     x = np.arange(fits_df.shape[1])
     ax.axhline(0,c='k', linewidth=0.5)
-    sns.stripplot(data=fits_df, color='k', size=2, axes=ax)
+    sns.swarmplot(data=fits_df, color='grey', size=2, axes=ax)
     ax.errorbar(x,fits_df.mean(), fits_df.sem(),linestyle='none', linewidth=2, color='r')
     if xticklabels:
         ax.set_xticklabels(fits_df.columns.to_list(),rotation=-45, ha='left', rotation_mode='anchor')
