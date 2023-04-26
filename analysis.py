@@ -1,3 +1,6 @@
+'''Analysis and plotting functions.'''
+# © Thomas Akam, 2023, released under the GPLv3 licence.
+
 #%%  Imports 
 
 import os
@@ -415,6 +418,10 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
                        'stim'      :2*(stim_trials[:-1]-0.5),
                        'stay_prob' : stay_probs,
                        'logit_stay_prob':logit(stay_probs)})
+    
+    # Remove any trials with probabilites very close to 0/1 to avoid issues with logit transformed probs.
+    df = df.loc[df['stay_prob'].between(0.001,0.999),:]
+    
     return df
 
 def _plot_opto_fits(fits_df, ax, xticklabels=True):

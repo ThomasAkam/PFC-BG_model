@@ -1,8 +1,10 @@
+'''Code implementing the two-step task environment.'''
+# © Thomas Akam, 2023, released under the GPLv3 licence.
+
 import numpy as np
 
 def withprob(p):
     return np.random.rand() < p
-
 
 # State and action IDs
 initiate = 0
@@ -30,7 +32,7 @@ class Two_step():
         self.n_states  = 6 # {0: initiate, 1: choice, 2: sec. step A, 3: sec. step B, 4: reward A, 5: reward B}
 
     def step(self, action):
-    # Execute one time step within the environment
+        '''Recieve action and return next state and reward.'''
         reward = 0
         if self.state in (initiate, reward_A, reward_B):
             if action == initiate: # Initate action.
@@ -73,7 +75,7 @@ class Two_step():
         return self.state, reward
     
     def reset(self):
-        # Reset the state of the environment to an initial state
+        '''Reset the state of the environment to an initial state.'''
         self.trial_n = 0
         self.block_n = 0
         self.block_trial = 0
@@ -84,6 +86,7 @@ class Two_step():
         return self.state
 
     def sample_appropriate_action(self, state):
+        '''Return a randomly selected action that is valid given the state.'''
         if state in (initiate, reward_A, reward_B):
             action = initiate
         elif state == choice:

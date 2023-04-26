@@ -1,10 +1,13 @@
-'''Script for running and analysing simulation experiments.'''
+'''Script for running and analysing simulation experiments comprised of multiple simulation runs.'''
+# © Thomas Akam, 2023, released under the GPLv3 licence.
 
 import os
 from concurrent.futures import ProcessPoolExecutor
 
 import analysis as an
 import model as md
+
+# Run simulation and save data to disk.
 
 def run_experiment(exp_dir, params, n_runs=12, n_processes=6):
     '''Run an experiment comprising multiple simulation runs in parallel and save the data to disk.'''
@@ -28,7 +31,8 @@ def run_experiments(n_runs=12, n_processes=6):
     exp_dir_pro=os.path.join('..','data','experiment_pro')
     run_experiment(exp_dir_pro, params, n_runs, n_processes)
 
-    
+# Analyse data that is already saved to disk.
+
 def analyse_experiment(exp_name):
     '''Load data from specified experiment and run analyses, saving
     generated figures to plots directory.'''
@@ -37,3 +41,14 @@ def analyse_experiment(exp_name):
     experiment_data = an.load_experiment(data_dir)
     an.plot_experiment(experiment_data, save_dir=save_dir)
     
+def analyse_experiments():
+    # Analyse experiment with default parameters.
+    analyse_experiment('experiment_def')
+    # Analyse experiment where PFC state input is gated by reward.
+    analyse_experiment('experiment_pro')
+    
+
+# Run file to run experiments then analyse the data.
+if __name__=='__main__':
+    run_experiments()
+    analyse_experiments()

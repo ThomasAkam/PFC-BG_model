@@ -1,4 +1,5 @@
-'''Script for experimenting with the RNN component of the model on its own without the RL component.'''
+'''Script for experimenting with the RNN component of the model without the RL component.'''
+# © Thomas Akam, 2023, released under the GPLv3 licence.
 
 #%% Imports.
 

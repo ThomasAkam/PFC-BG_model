@@ -1,3 +1,6 @@
+'''Code to implement the model and run a single simulation.'''
+# © Thomas Akam, 2023, released under the GPLv3 licence.
+
 #%% Imports
 
 import os

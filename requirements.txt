@@ -1,0 +1,9 @@
+tensorflow == 2.10
+spyder
+numpy
+pandas
+matplotlib
+seaborn
+scipy
+scikit-learn
+statsmodels
