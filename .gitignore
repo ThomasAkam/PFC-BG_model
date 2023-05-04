@@ -1,1 +1,6 @@
 __pycache__
+data/*
+!data/README.txt
+plots/*
+!plots/README.txt
+!plots/figure.png
