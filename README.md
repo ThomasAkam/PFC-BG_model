@@ -1,6 +1,6 @@
 # PFC - Basal-ganglia network model
 
-![Figure](./figure.png)
+![Figure](./plots/figure.png)
 
 This repository contains code used to generate the neural network model figure from the manuscript:
 
@@ -12,8 +12,8 @@ The model consists of a recurrent neural network representing prefrontal cortex 
 
 The file `run_experiment.py` contains functions to run a simulation experiment and analyse the data.
 
--  `run_experiments()` runs 12 simulation runs each for the two model variants shown in the figure and saves the data to disk. 
--  `analyse_experiments()` loads the saved data and runs the analyses to generate the figure panels.
+-  `run_experiments()` runs 12 simulation runs each for the two model variants shown in the figure and saves the data in the `data` folder.
+-  `analyse_experiments()` loads the saved data and runs the analyses, saving figure panels in the `plots` folder.
 
 ## Requirements:
 
