@@ -10,7 +10,7 @@ The model consists of a recurrent neural network representing prefrontal cortex 
 
 ## Usage:
 
-The file `run_experiment.py` contains functions to run a simulation experiment and analyses the data.
+The file `run_experiment.py` contains functions to run a simulation experiment and analyse the data.
 
 -  `run_experiments()` runs 12 simulation runs each for the two model variants shown in the figure and saves the data to disk. 
 -  `analyse_experiments()` loads the saved data and runs the analyses to generate the figure panels.
@@ -18,8 +18,7 @@ The file `run_experiment.py` contains functions to run a simulation experiment a
 ## Requirements:
 
 - Python 3
-- tensorflow  (tested only with version 2.10)
-- spyder
+- tensorflow
 - numpy
 - pandas
 - matplotlib
@@ -27,5 +26,7 @@ The file `run_experiment.py` contains functions to run a simulation experiment a
 - scipy
 - scikit-learn
 - statsmodels
+
+The figure was generated using Python 3.10.8 and the package versions listed in [requirements.txt](./requirements.txt)
 
  
