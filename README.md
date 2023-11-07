@@ -2,6 +2,8 @@
 
 ![Figure](./plots/figure.png)
 
+ [![DOI](https://zenodo.org/badge/633124583.svg)](https://zenodo.org/doi/10.5281/zenodo.10079814)
+
 This repository contains code used to generate the neural network model figure from the [manuscript](https://www.biorxiv.org/content/10.1101/2021.06.25.449995v3):
 
 > Blanco-Pozo, M., Akam, T., &  Walton, M. (2023).  **Dopamine-independent state inference mediates expert reward guided decision making**  *bioRxiv*, 2023-04.
