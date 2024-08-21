@@ -54,7 +54,7 @@ def load_run(run_dir):
             self.rnn=nn.GRU(input_size, pm['n_pfc'], 1, batch_first=True)
             self.state_pred=nn.Linear(pm['n_pfc'],task.n_states)
             self.float()
-        
+            
         def forward(self, x):
             h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
             out, _=self.rnn(x,h0)
