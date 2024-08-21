@@ -141,8 +141,7 @@ def run_simulation(save_dir=None, pm=default_params):
         used for training as the most recent state is the prediction target.'''
         masked_pfc_inputs = np.array(pfc_inputs)
         masked_pfc_inputs[:,-1,:task.n_states] = 0
-        masked_pfc_inputs=torch.from_numpy(masked_pfc_inputs)
-        masked_pfc_inputs=tensor.float(masked_pfc_inputs)
+        masked_pfc_inputs=tensor.float(torch.from_numpy(masked_pfc_inputs))
         return masked_pfc_inputs
     
     # Striatum model
@@ -162,7 +161,7 @@ def run_simulation(save_dir=None, pm=default_params):
             critic=self.critic(y)
             return actor, critic
     
-    Str_model=Striatum ()
+    Str_model=Striatum()
     str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=pm['str_learning_rate'])
     
     # Environment loop.
