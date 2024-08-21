@@ -301,30 +301,22 @@ def _get_value_updates(run_data, last_n=10):
     for i,ep in enumerate(episode_buffer[-last_n:]):
         _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
         # Generate PFC activity that would have occured had each second step state been reached on each trial.
-        # Generate PFC activity that would have occured had each second step state been reached on each trial.
         ss_pfc_inputs = ep.pfc_inputs[ss_inds]
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_A]  = 1
-        ss_pfc_torch_inputA=torch.from_numpy(ss_pfc_inputs)
-        ss_pfc_torch_inputA=tensor.float(ss_pfc_torch_inputA)
-        _, ss_pfc_states_A_torch = PFC_model(ss_pfc_torch_inputA) # PFC activity if second-step reached was A.
+        _, ss_pfc_states_A_torch = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
-        ss_pfc_torch_inputB=torch.from_numpy(ss_pfc_inputs)
-        ss_pfc_torch_inputB=tensor.float(ss_pfc_torch_inputB)
-        _, ss_pfc_states_B_torch = PFC_model(ss_pfc_torch_inputB) # PFC activity if second-step reached was B.
+        _, ss_pfc_states_B_torch = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
         # Compute values of both second step states on each trial.
-        obsA=torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states))
-        pfc_A=torch.detach(ss_pfc_states_A_torch).clone()
-        _, V_ssA = Str_model(obsA, pfc_A)
-        obsB=torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states))
-        pfc_B=torch.detach(ss_pfc_states_B_torch).clone()
-        _, V_ssB = Str_model(obsB, pfc_B)
-        V_ssA=tensor.detach(V_ssA).numpy()
-        V_ssB=tensor.detach(V_ssB).numpy()
+        _, V_ssA = Str_model(torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states)), 
+                             torch.detach(ss_pfc_states_A_torch).clone())
+    
+        _, V_ssB = Str_model(torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states)), 
+                                              torch.detach(ss_pfc_states_B_torch).clone())
         # Compute value changes as a function of trial outcome and same/different second-step state.
-        dVA = np.diff(V_ssA.numpy().squeeze())
-        dVB = np.diff(V_ssB.numpy().squeeze())
+        dVA = np.diff(tensor.detach(V_ssA).numpy().squeeze())
+        dVB = np.diff(tensor.detach(V_ssB).numpy().squeeze())
         rew_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) &  outcomes[:-1]],
                                  dVB[(sec_steps[:-1] == 0) &  outcomes[:-1]]])
         rew_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) &  outcomes[:-1]],
@@ -427,12 +419,10 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
     choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
     torch.save(Str_model.state_dict(), 'original_weights.pt' )
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
-    opto_obs=torch.from_numpy(one_hot(ep.states, task.n_states))
-    opto_pfc=torch.from_numpy(np.vstack(ep.pfc_states))
-    action_probs,_ = Str_model(opto_obs, opto_pfc)
-    action_probs=tensor.detach(action_probs).numpy()
-    choice_probs = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
-    
+    action_probs,_ = Str_model(torch.from_numpy(one_hot(ep.states, task.n_states)), 
+                               torch.from_numpy(np.vstack(ep.pfc_states)))
+    choice_probs = np.stack([tensor.detach(action_probs).numpy()[ch_inds,ts.choose_B],
+                             tensor.detach(action_probs).numpy()[ch_inds,ts.choose_A]])
     # Compute A/B choice probabilities following opto stim for randomly selected set of trials. 
     stim_trials = np.random.rand(choice_probs.shape[1])<stim_prob
     
@@ -447,11 +437,8 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         # Compute gradients due to opto stim.
         
         # Critic loss.
-        tr_obs=one_hot(ep.states[i], task.n_states)[np.newaxis,:]
-        tr_obs=torch.from_numpy(tr_obs)
-        tr_pfc= ep.pfc_states[i][np.newaxis,:]
-        tr_pfc=torch.from_numpy(tr_pfc)
-        tr_action_probs, tr_value = Str_model(tr_obs, tr_pfc)# Action probs and values for single trial.
+        tr_action_probs, tr_value = Str_model(torch.from_numpy(one_hot(ep.states[i], task.n_states)[np.newaxis,:]), 
+                                              torch.from_numpy(ep.pfc_states[i][np.newaxis,:]))# Action probs and values for single trial.
         critic_loss = -2*stim_strength*tr_value
         # Actor loss.
         log_chosen_prob = torch.log(tr_action_probs[0, ep.actions[i]])
@@ -466,8 +453,10 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         SGD_optimiser.step()
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
-        nt_action_probs, _ = Str_model([one_hot(ep.states[j], task.n_states)[np.newaxis,:], ep.pfc_states[j][np.newaxis,:]])
-        choice_probs[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
+        nt_action_probs, _ = Str_model(torch.from_numpy(one_hot(ep.states[j], task.n_states)[np.newaxis,:]),
+                                       torch.from_numpy(ep.pfc_states[j][np.newaxis,:]))
+        choice_probs[:,t+1] = (tensor.detach(nt_action_probs).numpy()[0,ts.choose_B],
+                               tensor.detach(nt_action_probs).numpy()[0,ts.choose_A])
         # Reset model weights.
         Str_model.load_state_dict(torch.load('original_weights.pt'))
         

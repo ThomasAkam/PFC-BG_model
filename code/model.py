@@ -87,43 +87,34 @@ def run_simulation(save_dir=None, pm=default_params):
     
     if pm['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
         input_size=(task.n_states)
-        pfc_input_buffer = np.zeros([pm['n_back'], task.n_states], bool)
-        pfc_input_buffer=torch.from_numpy(pfc_input_buffer)
-        pfc_input_buffer=tensor.float(pfc_input_buffer)
+        pfc_input_buffer = tensor.float(torch.from_numpy(np.zeros([pm['n_back'], task.n_states], bool)))
     else: # PFC input is 1 hot encoding of observable state and previous action.
         input_size=(task.n_states+task.n_actions)
-        pfc_input_buffer = np.zeros([pm['n_back'], task.n_states+task.n_actions], bool)
-        pfc_input_buffer=torch.from_numpy(pfc_input_buffer) 
-        pfc_input_buffer=tensor.float(pfc_input_buffer)
-    
+        pfc_input_buffer = tensor.float(torch.from_numpy(np.zeros([pm['n_back'], task.n_states+task.n_actions], bool)))
     # Creates a replica of the input_buffer that can be used for analysis 
     pfc_buffer=tensor.detach(pfc_input_buffer).numpy()
     pfc_buffer=np.array(pfc_buffer, dtype=bool) 
-    hidden_size=pm['n_pfc']
-    num_layers=1
-    num_classes=task.n_states
-    seq_length=pm['n_back']
-        
+    
     #PFC Model
-    class PFC_model(nn.Module):
-        def __init__(self, input_size, hidden_size, num_layers, num_classes):
-            super(PFC_model,self).__init__()
-            self.hidden_size= hidden_size
-            self.num_layers=num_layers
-            #Code to discuss what the input size of the model should be in this state. 
-            self.rnn=nn.GRU(input_size, hidden_size, num_layers, batch_first=True)# Recurrent layer.
-            self.state_pred=nn.Linear(hidden_size,num_classes)
-            self.float()
-        
+    class PFC(nn.Module):
+    # implemented using RNN model
+        def __init__(self):
+            super(PFC,self).__init__()
+            self.hidden_size= pm['n_pfc']
+            self.num_layers=1
+            self.rnn=nn.GRU(input_size,  pm['n_pfc'], 1, batch_first=True)# Recurrent layer.
+            self.state_pred=nn.Linear( pm['n_pfc'],task.n_states)# Output layer predicts next state
         def forward(self, x):
             h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
             out, _=self.rnn(x,h0)
+            #we want to decode the hidden state from just the last time step
             hidden=out[:,-1,:]
+            #the self.rnn returns the code from the last layer of the Gru, i.e. the last hidden state or the PFC_layer
             out=F.softmax(self.state_pred(hidden))
-            return out, hidden  #out returns the state_prediction whilst hidden returns the state of the RNN layer                                                                                                             
-    model=PFC_model(input_size, hidden_size, num_layers, num_classes)
+            return out, hidden                                                                                                
+    PFC_model=PFC()
     pfc_loss_fn= nn.MSELoss()
-    pfc_optimizer=torch.optim.Adam(model.parameters(), lr=pm['pfc_learning_rate'])
+    pfc_optimizer=torch.optim.Adam(PFC_model.parameters(), lr=pm['pfc_learning_rate'])
 
     def update_pfc_input(a,s,r):
         '''Update the inputs to the PFC network given the action, subsequent state and reward.'''
@@ -156,9 +147,9 @@ def run_simulation(save_dir=None, pm=default_params):
     
     # Striatum model
     
-    class Str_model(nn.Module):
+    class Striatum(nn.Module):
         def __init__(self):
-            super(Str_model, self).__init__()
+            super(Striatum, self).__init__()
             self.input=nn.Linear((task.n_states+pm['n_pfc']),pm['n_str'])# represents the concatenation of the observal states and PFC activity
             self.actor=nn.Linear(pm['n_str'], task.n_actions)
             self.critic=nn.Linear(pm['n_str'],1)
@@ -171,8 +162,8 @@ def run_simulation(save_dir=None, pm=default_params):
             critic=self.critic(y)
             return actor, critic
     
-    bg=Str_model()
-    str_optimizer=torch.optim.Adam(bg.parameters(), lr=pm['str_learning_rate'])
+    Str_model=Striatum ()
+    str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=pm['str_learning_rate'])
     
     # Environment loop.
     
@@ -190,11 +181,8 @@ def run_simulation(save_dir=None, pm=default_params):
     
     s = task.reset() # Get initial state as integer.
     r = 0
-    _, pfc_s_torch =model(pfc_input_buffer[None,:,:])
-    pfc_s=tensor.detach(pfc_s_torch).numpy()
+    _, pfc_s =PFC_model(pfc_input_buffer[None,:,:])
     episode_buffer=[]
-    
-    episode_buffer = []
     
     for e in range(pm['n_episodes']):
         
@@ -214,26 +202,18 @@ def run_simulation(save_dir=None, pm=default_params):
             step_n += 1
             
             # Choose action.
-            obs_state=one_hot(s, task.n_states)[None,:]
-            obs_state=torch.from_numpy(obs_state)
-            pfc_state=torch.detach(pfc_s_torch).clone()
-            action_probs, V= bg(obs_state, pfc_state)
-            action_probs_choice=tensor.detach(action_probs).numpy()
-            V=tensor.detach(V).numpy()
-            a =np.random.choice(task.n_actions, p=np.squeeze(action_probs_choice))
+            action_probs, V= Str_model(torch.from_numpy(one_hot(s, task.n_states)[None,:]), torch.detach(pfc_s).clone())
+            a =np.random.choice(task.n_actions, p=np.squeeze(tensor.detach(action_probs).numpy()))
             
             # Store history.
-            store_trial_data(s, r, a, pfc_s, V)
-            
+            store_trial_data(s, r, a, tensor.detach(pfc_s).numpy(), tensor.detach(V).numpy())
             # Get next state and reward.
             s, r = task.step(a)
             
             # Get new pfc state.
             update_pfc_input(a,s,r)
             update_pfc_numpy(a,s,r)
-            
-            _, pfc_s_torch= model(pfc_input_buffer[None,:,:])
-            pfc_s=tensor.detach(pfc_s_torch).numpy()   
+            _, pfc_s=PFC_model(pfc_input_buffer[None,:,:])
 
     
             n_trials = task.trial_n - start_trial
@@ -241,7 +221,7 @@ def run_simulation(save_dir=None, pm=default_params):
                 break # End of episode.  
                 
         # Store episode data.
-        predictions,_=model(get_masked_PFC_inputs(pfc_inputs))
+        predictions,_=PFC_model(get_masked_PFC_inputs(pfc_inputs))
         pred_states=tensor.detach(predictions).numpy()
         pred_states=np.argmax(pred_states,1)# Used only for analysis.
         episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_inputs),
@@ -249,28 +229,21 @@ def run_simulation(save_dir=None, pm=default_params):
         
         # Update striatum weights using advantage actor critic (A2C), Mnih et al. PMLR 48:1928-1937, 2016
         
-        returns = np.zeros([len(rewards),1], dtype='float32')
-        returns[-1] = V
+        returns=np.zeros([len(rewards),1], dtype='float32')
+        returns[-1]=tensor.detach(V).numpy()
         for i in range(1, len(returns)):
-            returns[-i-1] = rewards[-i] + pm['gamma']*returns[-i]
-                 
-        advantages = (returns - np.vstack(values)).squeeze()
-        advantages= torch.from_numpy(advantages)
-        returns=torch.from_numpy(returns)
+                returns[-i-1] = rewards[-i] + pm['gamma']*returns[-i] 
+
+        advantages = torch.from_numpy((returns - np.vstack(values)).squeeze())
           
         # Calculate gradients
-        obs_states_g=torch.from_numpy(one_hot(states, task.n_states))
-        pfc_states_g=torch.from_numpy(np.vstack(pfc_states))
-       
-        action_probs_g, values_g = bg(obs_states_g, pfc_states_g)# Gradient of these is tracked wrt Str_model weights.
+        action_probs_g, values_g = Str_model(torch.from_numpy(one_hot(states, task.n_states)), 
+                                      torch.from_numpy(np.vstack(pfc_states)))# Gradient of these is tracked wrt Str_model weights.
         # Critic loss.
-        critic_loss = F.mse_loss(values_g, returns, reduction='sum')
-        critic_loss=tensor.float(critic_loss)
+        critic_loss = F.mse_loss(values_g, torch.from_numpy(returns), reduction='sum')
         # Actor loss.
-        chosen_probs=torch_gather_nd(action_probs_g,torch.tensor([[i,a] for i,a in enumerate(actions)]))
-        log_chosen_probs=torch.log(chosen_probs)
-        log_action_probs_g=torch.log(action_probs_g)
-        entropy = -torch.sum(action_probs_g*log_action_probs_g,1)
+        log_chosen_probs=torch.log(torch_gather_nd(action_probs_g,torch.tensor([[i,a] for i,a in enumerate(actions)])))
+        entropy = -torch.sum(action_probs_g*torch.log(action_probs_g),1)
         actor_loss = torch.sum(-log_chosen_probs*advantages-
                                 entropy*pm['entropy_loss_weight'])
         policy_loss=actor_loss+critic_loss
@@ -284,40 +257,29 @@ def run_simulation(save_dir=None, pm=default_params):
 
         if pm['pred_rewarded_only']: # PFC is trained to predict its current input given previous input.
             pfc_numpy=np.array(pfc_inputs[:-1])
-            x=torch.from_numpy(pfc_numpy)
-            x=tensor.float(x)
-            y=one_hot(states[1:], task.n_states)*np.array(rewards)[1:,np.newaxis]
-            y=torch.from_numpy(y)
-            y=tensor.float(y)
-            batchsize=x.size()
-            batchsize=batchsize[0]
+            x=tensor.float(torch.from_numpy(pfc_numpy))
+            y=tensor.float(torch.from_numpy(one_hot(states[1:], task.n_states)*np.array(rewards)[1:,np.newaxis]))
+            batchsize=x.size()[0]
             batchdata=torch.utils.data.TensorDataset(x, y)
             batchloader=torch.utils.data.DataLoader(dataset=batchdata, batch_size=batchsize, shuffle=False)
         else: # PFC is trained to predict the current state given previous action and state.
             x=get_masked_PFC_inputs(pfc_inputs)
-            batchsize=x.size()
-            batchsize=batchsize[0]
-            y=one_hot(states, task.n_states)
-            y=torch.from_numpy(y)
-            y=tensor.float(y)
+            batchsize=x.size()[0]
+            y=tensor.float(torch.from_numpy(one_hot(states, task.n_states)))
             batchdata=torch.utils.data.TensorDataset(x, y)
             batchloader=torch.utils.data.DataLoader(dataset=batchdata, batch_size=batchsize, shuffle=False)
         
         for i, (w, z) in enumerate(batchloader):
-            inputs=w
-            #Ensures that the tensor length is the correct length (i.e. n_back=30)
-            inputs=inputs.reshape(-1, seq_length, input_size)
+            inputs=w.reshape(-1, pm['n_back'], input_size)
             labels=z
-            #Forward pass
-            outputs,__=model(inputs)
-            pfc_loss=pfc_loss_fn(outputs, labels)
-            #Backward and optimise
+            outputs,__=PFC_model(inputs)
+            tl=pfc_loss_fn(outputs, labels)
             pfc_optimizer.zero_grad()
-            pfc_loss.backward()
+            tl.backward()
             pfc_optimizer.step()
             
         print(f'Episode: {e} Steps: {step_n} Trials: {n_trials} '
-              f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {pfc_loss.item() :.3f}')
+              f' Rew. per tr.: {np.sum(rewards)/n_trials :.2f} PFC tr. loss: {tl.item() :.3f}')
         
         if e % 10 == 9: an.plot_performance(episode_buffer, task)
         
@@ -333,8 +295,8 @@ def run_simulation(save_dir=None, pm=default_params):
         
         PATH="model.pt"
         torch.save({
-            'PFC_model_state_dict': model.state_dict(),
-            'Str_model_state_dict': bg.state_dict(),
+            'PFC_model_state_dict': PFC_model.state_dict(),
+            'Str_model_state_dict': Str_model.state_dict(),
             'pfc_optimizer': pfc_optimizer.state_dict(),
             'str_optimizer': str_optimizer.state_dict()
             }, os.path.join(save_dir, PATH))

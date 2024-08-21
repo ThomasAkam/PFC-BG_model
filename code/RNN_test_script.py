@@ -36,11 +36,9 @@ for i in range(n_steps):
     s, r = task.step(actions[i])
     states[i] = s
     rewards[i] = r
-states=torch.from_numpy(states)
-actions=torch.from_numpy(actions)
-rewards=torch.from_numpy(rewards)
-states_v = F.one_hot(states, task.n_states)*(rewards)[:,None]
-actions_v = F.one_hot(actions, task.n_actions)
+
+states_v = F.one_hot(torch.from_numpy(states), task.n_states)*(torch.from_numpy(rewards))[:,None]
+actions_v = F.one_hot(torch.from_numpy(actions), task.n_actions)
 states_actions = torch.hstack([states_v, actions_v])
 states_actions=tensor.numpy(states_actions)
 x = [] # State-action sequences
@@ -51,36 +49,26 @@ for i in range(0, len(states_actions) - n_back):
     sa[-1,:task.n_states] = 0
     x.append(sa)
 print("Number of sequences:", len(x))
-x = np.stack(x)
-x=torch.from_numpy(x)
-x=x.float()
-y = np.stack(y)
-y=torch.from_numpy(y)
-y=y.float()
+x=tensor.float(torch.from_numpy(np.stack(x)))
+y=tensor.float(torch.from_numpy(np.stack(y)))
+
 
 #%% Define model.
-input_size=task.n_states+task.n_actions# Inputs are 1 hot encoding of alternatig states and actions.
-seq_length=n_back
-hidden_size=n_rnn
-num_layers=1
-num_classes=task.n_states
 class PFC_model(nn.Module):
     # implemented using RNN model
-    def __init__(self, input_size, hidden_size, num_layers, num_classes):
+    def __init__(self):
         super(PFC_model,self).__init__()
-        self.hidden_size= hidden_size
-        self.num_layers=num_layers
-        self.rnn=nn.GRU(input_size, hidden_size, num_layers, batch_first=True)# Recurrent layer.
-        self.state_pred=nn.Linear(hidden_size,num_classes)# Output layer predicts next state
+        self.hidden_size= n_rnn
+        self.num_layers=1
+        self.rnn=nn.GRU(task.n_states+task.n_actions, n_rnn, 1, batch_first=True)# Recurrent layer.
+        self.state_pred=nn.Linear(n_rnn,task.n_states)# Output layer predicts next state
     def forward(self, x):
         h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
-        out, hx=self.rnn(x,h0)
-        #we want to decode the hidden state from just the last time step
+        out, _=self.rnn(x,h0)
         hidden=out[:,-1,:]
-        #the self.rnn returns the code from the last layer of the Gru, i.e. the last hidden state or the PFC_layer
         out=F.softmax(self.state_pred(hidden))
         return out, hidden                                                                                                               
-model=PFC_model(input_size, hidden_size, num_layers, num_classes)
+model=PFC_model()
 loss_fn= nn.MSELoss()
 optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -95,7 +83,7 @@ for epoch in range (epochs):
     for i, (w, z) in enumerate(train_loader):
         inputs=w
         #Ensures that the tensor length is the correct length 
-        inputs=inputs.reshape(-1, seq_length, input_size)
+        inputs=inputs.reshape(-1, n_back,task.n_states+task.n_actions )
         labels=z
         #Forward pass
         outputs,__=model(inputs)
@@ -107,8 +95,6 @@ for epoch in range (epochs):
 
 with torch.no_grad():
     y_pred, RNN_state=  model(x[-1000:])
-states=tensor.numpy(states)
-
 
 # Plot predicted reward probabilities across trials for test data.
 y_pred=tensor.detach(y_pred).numpy()
