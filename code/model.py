@@ -87,10 +87,10 @@ def run_simulation(save_dir=None, pm=default_params):
     
     if pm['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
         input_size=(task.n_states)
-        pfc_input_buffer = tensor.float(torch.from_numpy(np.zeros([pm['n_back'], task.n_states], bool)))
+        pfc_input_buffer =torch.zeros([pm['n_back'], task.n_states])
     else: # PFC input is 1 hot encoding of observable state and previous action.
         input_size=(task.n_states+task.n_actions)
-        pfc_input_buffer = tensor.float(torch.from_numpy(np.zeros([pm['n_back'], task.n_states+task.n_actions], bool)))
+        pfc_input_buffer = torch.zeros([pm['n_back'], task.n_states+task.n_actions])
     # Creates a replica of the input_buffer that can be used for analysis 
     pfc_buffer=tensor.detach(pfc_input_buffer).numpy()
     pfc_buffer=np.array(pfc_buffer, dtype=bool) 
