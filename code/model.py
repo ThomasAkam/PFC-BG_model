@@ -61,9 +61,9 @@ def run_simulation(save_dir=None, pm=default_params):
         input_size=(task.n_states+task.n_actions)
         pfc_input_buffer = torch.zeros([pm['n_back'], task.n_states+task.n_actions])
    
-    #PFC Model
+    #PFC model
     class PFC(nn.Module):
-    # implemented using RNN model
+    
         def __init__(self):
             super(PFC,self).__init__()
             self.hidden_size= pm['n_pfc']
@@ -73,11 +73,9 @@ def run_simulation(save_dir=None, pm=default_params):
         def forward(self, x):
             h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
             out, _=self.rnn(x,h0)
-            #we want to decode the hidden state from just the last time step
             hidden=out[:,-1,:]
-            #the self.rnn returns the code from the last layer of the Gru, i.e. the last hidden state or the PFC_layer
             out=F.softmax(self.state_pred(hidden))
-            return out, hidden                                                                                                
+            return out, hidden         #Hidden used to get state of RNN layer                                                                                       
     PFC_model=PFC()
     pfc_loss_fn= nn.MSELoss()
     pfc_optimizer=torch.optim.Adam(PFC_model.parameters(), lr=pm['pfc_learning_rate'])
@@ -106,18 +104,16 @@ def run_simulation(save_dir=None, pm=default_params):
     class Striatum(nn.Module):
         def __init__(self):
             super(Striatum, self).__init__()
-            self.input=nn.Linear((task.n_states+pm['n_pfc']),pm['n_str'])# represents the concatenation of the observal states and PFC activity
+            self.input=nn.Linear((task.n_states+pm['n_pfc']),pm['n_str'])#Observable state and PFC activity features
             self.actor=nn.Linear(pm['n_str'], task.n_actions)
             self.critic=nn.Linear(pm['n_str'],1)
             self.float()
-        
         def forward(self, obs_state, pfc_state):
             y=torch.hstack((obs_state, pfc_state))
             y=F.relu(self.input(y))
             actor=F.softmax(self.actor(y), dim=-1)
             critic=self.critic(y)
             return actor, critic
-    
     Str_model=Striatum()
     str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=pm['str_learning_rate'])
     
@@ -138,6 +134,7 @@ def run_simulation(save_dir=None, pm=default_params):
     s = task.reset() # Get initial state as integer.
     r = 0
     _, pfc_s =PFC_model(pfc_input_buffer[None,:,:])
+    
     episode_buffer=[]
     
     for e in range(pm['n_episodes']):
@@ -163,6 +160,7 @@ def run_simulation(save_dir=None, pm=default_params):
             
             # Store history.
             store_trial_data(s, r, a, tensor.detach(pfc_s).numpy(), tensor.detach(V).numpy())
+            
             # Get next state and reward.
             s, r = task.step(a)
             
@@ -177,6 +175,7 @@ def run_simulation(save_dir=None, pm=default_params):
                 break # End of episode.  
                 
         # Store episode data.
+        
         predictions,_=PFC_model(get_masked_PFC_inputs(pfc_inputs))
         pred_states=np.argmax(tensor.detach(predictions).numpy(),1)# Used only for analysis.
         episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_inputs),
@@ -192,21 +191,24 @@ def run_simulation(save_dir=None, pm=default_params):
         advantages = torch.from_numpy((returns - np.vstack(values)).squeeze())
           
         # Calculate gradients
+        
+        # Critic loss.
         action_probs_g, values_g = Str_model(F.one_hot(torch.tensor(states), task.n_states), 
                                              torch.from_numpy(np.vstack(pfc_states)))# Gradient of these is tracked wrt Str_model weights.
-        # Critic loss.
         critic_loss = F.mse_loss(values_g, torch.from_numpy(returns), reduction='sum')
         # Actor loss.
         chosen_probs=torch.gather(action_probs_g,1, torch.transpose(torch.tensor([actions]),0,1))
         log_chosen_probs=torch.log(torch.transpose(chosen_probs,1,0))
         entropy = -torch.sum(action_probs_g*torch.log(action_probs_g),1)
-        actor_loss = torch.sum(-log_chosen_probs*advantages-
-                                entropy*pm['entropy_loss_weight'])
+        actor_loss = torch.sum(-log_chosen_probs*advantages-entropy*pm['entropy_loss_weight'])
         policy_loss=actor_loss+critic_loss
         # Apply gradients
         str_optimizer.zero_grad()
+        
         policy_loss.backward()
+        
         # Update weights 
+        
         str_optimizer.step()
         
         # Update PFC weights.

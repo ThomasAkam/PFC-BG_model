@@ -10,15 +10,14 @@ import numpy as np
 import pandas as pd
 import pylab as plt
 import seaborn as sns
+import torch 
 import statsmodels.formula.api as smf
 from scipy.special import logit
 from scipy.stats import ttest_1samp, sem
 from statsmodels.stats.proportion import proportions_ztest
 from sklearn.decomposition import PCA
-import torch 
-from torch import nn
-from torch.utils.data import DataLoader
 from torch import Tensor as tensor
+from torch import nn
 import torch.nn.functional as F
 from collections import namedtuple
 
@@ -37,35 +36,34 @@ def load_run(run_dir):
             params = json.load(fp)
     with open(os.path.join(run_dir, 'episodes.pkl'), 'rb') as f: 
         episode_buffer = pickle.load(f)
-    pm=params
-    task = ts.Two_step(good_prob=pm['good_prob'], block_len=pm['block_len'])
+    ##Initialise models and optimizers
+    #PFC model
     class pfc(nn.Module):
         def __init__(self):
             super(pfc,self).__init__()
-            if pm['pred_rewarded_only']:
+            if params['pred_rewarded_only']:
                 input_size=(task.n_states)
             else: 
                 input_size=(task.n_states+task.n_actions)
-            self.hidden_size= pm['n_pfc']
+            self.hidden_size= params['n_pfc']
             self.num_layers=1
-            self.rnn=nn.GRU(input_size, pm['n_pfc'], 1, batch_first=True)
-            self.state_pred=nn.Linear(pm['n_pfc'],task.n_states)
+            self.rnn=nn.GRU(input_size, params['n_pfc'], 1, batch_first=True)
+            self.state_pred=nn.Linear(params['n_pfc'],task.n_states)
             self.float()
-            
         def forward(self, x):
             h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
             out, _=self.rnn(x,h0)
             hidden=out[:,-1,:]
             out=F.softmax(self.state_pred(hidden))
-            return out, hidden                                                                                                   
+            return out, hidden 
+    #Str model                                                                                                  
     class bg(nn.Module):
         def __init__(self):
             super(bg, self).__init__()
-            self.input=nn.Linear((task.n_states+pm['n_pfc']),pm['n_str'])
-            self.actor=nn.Linear(pm['n_str'], task.n_actions)
-            self.critic=nn.Linear(pm['n_str'],1)
+            self.input=nn.Linear((task.n_states+params['n_pfc']),params['n_str'])
+            self.actor=nn.Linear(params['n_str'], task.n_actions)
+            self.critic=nn.Linear(params['n_str'],1)
             self.float()
-        
         def forward(self, obs_state, pfc_state):
             y=torch.hstack((obs_state, pfc_state))
             y=F.relu(self.input(y))
@@ -74,8 +72,8 @@ def load_run(run_dir):
             return actor, critic
     PFC_model=pfc()
     Str_model= bg()
-    pfc_optimizer=torch.optim.Adam(PFC_model.parameters(), lr=pm['pfc_learning_rate'])
-    #str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=pm['str_learning_rate'])
+    pfc_optimizer=torch.optim.Adam(PFC_model.parameters(), lr=params['pfc_learning_rate'])
+    #str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=params['str_learning_rate'])
 
     PATH=os.path.join(run_dir, 'model.pt')
     checkpoint=torch.load(PATH)
@@ -301,16 +299,16 @@ def _get_value_updates(run_data, last_n=10):
         ss_pfc_inputs = ep.pfc_inputs[ss_inds]
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_A]  = 1
-        _, ss_pfc_states_A_torch = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
+        _, ss_pfc_states_A = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
-        _, ss_pfc_states_B_torch = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
+        _, ss_pfc_states_B = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
         # Compute values of both second step states on each trial.
         _, V_ssA = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_A), task.n_states), 
-                             torch.detach(ss_pfc_states_A_torch).clone())
+                             torch.detach(ss_pfc_states_A).clone())
     
         _, V_ssB = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_B), task.n_states), 
-                                              torch.detach(ss_pfc_states_B_torch).clone())
+                                              torch.detach(ss_pfc_states_B).clone())
         # Compute value changes as a function of trial outcome and same/different second-step state.
         dVA = np.diff(tensor.detach(V_ssA).numpy().squeeze())
         dVB = np.diff(tensor.detach(V_ssB).numpy().squeeze())
