@@ -17,17 +17,6 @@ from collections import namedtuple
 import two_step_task as ts
 import analysis as an
 
-def torch_gather_nd(params: torch.Tensor, indices: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
-    index_shape = indices.shape[:-1]
-    num_dim = indices.size(-1)
-    for i in range(num_dim):
-        size = int(np.prod(params.shape[i+1:num_dim]))
-        indices[..., i] *= size
-    indices = indices.sum(dim=-1)
-    params = params.flatten(batch_dim, -1)
-    out = torch.gather(params, dim=batch_dim, index=indices)
-    return out.reshape(*index_shape,)
-
 Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_inputs', 'pfc_states', 'pred_states','task_rew_states', 'n_trials'])
 
 #%% Parameters.
@@ -208,7 +197,8 @@ def run_simulation(save_dir=None, pm=default_params):
         # Critic loss.
         critic_loss = F.mse_loss(values_g, torch.from_numpy(returns), reduction='sum')
         # Actor loss.
-        log_chosen_probs=torch.log(torch_gather_nd(action_probs_g,torch.tensor([[i,a] for i,a in enumerate(actions)])))
+        chosen_probs=torch.gather(action_probs_g,1, torch.transpose(torch.tensor([actions]),0,1))
+        log_chosen_probs=torch.log(torch.transpose(chosen_probs,1,0))
         entropy = -torch.sum(action_probs_g*torch.log(action_probs_g),1)
         actor_loss = torch.sum(-log_chosen_probs*advantages-
                                 entropy*pm['entropy_loss_weight'])
