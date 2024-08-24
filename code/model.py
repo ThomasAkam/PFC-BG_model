@@ -16,37 +16,19 @@ from collections import namedtuple
 
 import two_step_task as ts
 import analysis as an
-def one_hot(y, num_classes):
-    """ 1-hot encodes a tensor """
-    return np.eye(num_classes, dtype='uint8')[y]
- # code used to replicate keras.gather_nd function from https://gist.github.com/d4l3k/44548e97ee11153c4be026f62c62d38e
+
 def torch_gather_nd(params: torch.Tensor, indices: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
     """torch_gather_nd implements tf.gather_nd in PyTorch. This supports multiple batch dimensions as well as multiple channel dimensions."""
     index_shape = indices.shape[:-1]
     num_dim = indices.size(-1)
-    tail_sizes = params.shape[batch_dim+num_dim:]
-
-    # flatten extra dimensions
-    for s in tail_sizes:
-        row_indices = torch.arange(s, device=params.device)
-        indices = indices.unsqueeze(-2)
-        indices = indices.repeat(*[1 for _ in range(indices.dim()-2)], s, 1)
-        row_indices = row_indices.expand(*indices.shape[:-2], -1).unsqueeze(-1)
-        indices = torch.cat((indices, row_indices), dim=-1)
-        num_dim += 1
-
     # flatten indices and params to batch specific ones instead of channel specific
     for i in range(num_dim):
         size = int(np.prod(params.shape[batch_dim+i+1:batch_dim+num_dim]))
-        
         indices[..., i] *= size
-
     indices = indices.sum(dim=-1)
     params = params.flatten(batch_dim, -1)
-    indices = indices.flatten(batch_dim, -1)
-
     out = torch.gather(params, dim=batch_dim, index=indices)
-    return out.reshape(*index_shape,*tail_sizes)
+    return out.reshape(*index_shape,)
 
 Episode = namedtuple('Episode', ['states', 'rewards', 'actions', 'pfc_inputs', 'pfc_states', 'pred_states','task_rew_states', 'n_trials'])
 
@@ -189,7 +171,7 @@ def run_simulation(save_dir=None, pm=default_params):
             step_n += 1
             
             # Choose action.
-            action_probs, V= Str_model(torch.from_numpy(one_hot(s, task.n_states)[None,:]), torch.detach(pfc_s).clone())
+            action_probs, V= Str_model(F.one_hot(torch.tensor(s), task.n_states)[None,:], torch.detach(pfc_s).clone())
             a =np.random.choice(task.n_actions, p=np.squeeze(tensor.detach(action_probs).numpy()))
             
             # Store history.
@@ -223,8 +205,8 @@ def run_simulation(save_dir=None, pm=default_params):
         advantages = torch.from_numpy((returns - np.vstack(values)).squeeze())
           
         # Calculate gradients
-        action_probs_g, values_g = Str_model(torch.from_numpy(one_hot(states, task.n_states)), 
-                                      torch.from_numpy(np.vstack(pfc_states)))# Gradient of these is tracked wrt Str_model weights.
+        action_probs_g, values_g = Str_model(F.one_hot(torch.tensor(states), task.n_states), 
+                                             torch.from_numpy(np.vstack(pfc_states)))# Gradient of these is tracked wrt Str_model weights.
         # Critic loss.
         critic_loss = F.mse_loss(values_g, torch.from_numpy(returns), reduction='sum')
         # Actor loss.
@@ -244,14 +226,14 @@ def run_simulation(save_dir=None, pm=default_params):
         if pm['pred_rewarded_only']: # PFC is trained to predict its current input given previous input.
             pfc_numpy=np.array(pfc_inputs[:-1])
             x=tensor.float(torch.from_numpy(pfc_numpy))
-            y=tensor.float(torch.from_numpy(one_hot(states[1:], task.n_states)*np.array(rewards)[1:,np.newaxis]))
+            y=tensor.float(F.one_hot(torch.tensor(states[1:]), task.n_states)*np.array(rewards)[1:,np.newaxis])
             batchsize=x.size()[0]
             batchdata=torch.utils.data.TensorDataset(x, y)
             batchloader=torch.utils.data.DataLoader(dataset=batchdata, batch_size=batchsize, shuffle=False)
         else: # PFC is trained to predict the current state given previous action and state.
             x=get_masked_PFC_inputs(pfc_inputs)
             batchsize=x.size()[0]
-            y=tensor.float(torch.from_numpy(one_hot(states, task.n_states)))
+            y=tensor.float(F.one_hot(torch.tensor(states), task.n_states))
             batchdata=torch.utils.data.TensorDataset(x, y)
             batchloader=torch.utils.data.DataLoader(dataset=batchdata, batch_size=batchsize, shuffle=False)
         
