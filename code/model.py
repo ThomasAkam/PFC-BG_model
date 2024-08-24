@@ -91,10 +91,7 @@ def run_simulation(save_dir=None, pm=default_params):
     else: # PFC input is 1 hot encoding of observable state and previous action.
         input_size=(task.n_states+task.n_actions)
         pfc_input_buffer = torch.zeros([pm['n_back'], task.n_states+task.n_actions])
-    # Creates a replica of the input_buffer that can be used for analysis 
-    pfc_buffer=tensor.detach(pfc_input_buffer).numpy()
-    pfc_buffer=np.array(pfc_buffer, dtype=bool) 
-    
+   
     #PFC Model
     class PFC(nn.Module):
     # implemented using RNN model
@@ -126,15 +123,6 @@ def run_simulation(save_dir=None, pm=default_params):
         else:   
             pfc_input_buffer[-1,s] = 1               # One hot encoding of state.
             pfc_input_buffer[-1,a+task.n_states] = 1 # One hot encoding of action.
-    def update_pfc_numpy(a,s,r):   # same code for updating the clone numpy as well
-        '''Update the inputs to the PFC network given the action, subsequent state and reward.''' 
-        pfc_buffer[:-1,:]=pfc_buffer[1:,:]
-        pfc_buffer[-1,:] = 0
-        if pm['pred_rewarded_only']:
-            pfc_buffer[-1,s] = r # One hot encoding on state on rewarded timesteps, 0 vector on non-rewarded.
-        else:   
-            pfc_buffer[-1,s] = 1               # One hot encoding of state.
-            pfc_buffer[-1,a+task.n_states] = 1
 
     def get_masked_PFC_inputs(pfc_inputs):
         '''Return array of PFC input history with the most recent state masked, 
@@ -171,7 +159,7 @@ def run_simulation(save_dir=None, pm=default_params):
         states.append(s)
         rewards.append(r)
         actions.append(a)
-        pfc_inputs.append(pfc_input_buffer.copy())
+        pfc_inputs.append(tensor.detach(tensor.detach(pfc_input_buffer).clone()).numpy())
         pfc_states.append(pfc_s)
         values.append(V)
         task_rew_states.append(task.A_good)
@@ -211,7 +199,7 @@ def run_simulation(save_dir=None, pm=default_params):
             
             # Get new pfc state.
             update_pfc_input(a,s,r)
-            update_pfc_numpy(a,s,r)
+
             _, pfc_s=PFC_model(pfc_input_buffer[None,:,:])
 
     
@@ -221,8 +209,7 @@ def run_simulation(save_dir=None, pm=default_params):
                 
         # Store episode data.
         predictions,_=PFC_model(get_masked_PFC_inputs(pfc_inputs))
-        pred_states=tensor.detach(predictions).numpy()
-        pred_states=np.argmax(pred_states,1)# Used only for analysis.
+        pred_states=np.argmax(tensor.detach(predictions).numpy(),1)# Used only for analysis.
         episode_buffer.append(Episode(np.array(states), np.array(rewards), np.array(actions), np.array(pfc_inputs),
                                np.vstack(pfc_states), np.array(pred_states), np.array(task_rew_states), n_trials))
         
