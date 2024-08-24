@@ -88,8 +88,7 @@ def load_experiment(exp_dir, good_only=True):
     '''Load data from an experiment comprising multiple simulation runs, if good_only
     is True then only runs for which the reward rate in the last 10 episodes is
    significantly higher than 0.5 are returned.'''
-    run_dirs = os.listdir(exp_dir)
-    run_dirs=run_dirs[1:]
+    run_dirs = os.listdir(exp_dir)[1:]
     experiment_data = [load_run(os.path.join(exp_dir, run_dir)) for run_dir in run_dirs]
     if good_only:
         experiment_data = [run_data for run_data in experiment_data 
