@@ -18,12 +18,10 @@ import two_step_task as ts
 import analysis as an
 
 def torch_gather_nd(params: torch.Tensor, indices: torch.Tensor, batch_dim: int = 0) -> torch.Tensor:
-    """torch_gather_nd implements tf.gather_nd in PyTorch. This supports multiple batch dimensions as well as multiple channel dimensions."""
     index_shape = indices.shape[:-1]
     num_dim = indices.size(-1)
-    # flatten indices and params to batch specific ones instead of channel specific
     for i in range(num_dim):
-        size = int(np.prod(params.shape[batch_dim+i+1:batch_dim+num_dim]))
+        size = int(np.prod(params.shape[i+1:num_dim]))
         indices[..., i] *= size
     indices = indices.sum(dim=-1)
     params = params.flatten(batch_dim, -1)
