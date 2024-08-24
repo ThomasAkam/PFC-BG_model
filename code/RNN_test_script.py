@@ -82,7 +82,6 @@ n_total_steps=n_steps
 for epoch in range (epochs):
     for i, (w, z) in enumerate(train_loader):
         inputs=w
-        #Ensures that the tensor length is the correct length 
         inputs=inputs.reshape(-1, n_back,task.n_states+task.n_actions )
         labels=z
         #Forward pass
