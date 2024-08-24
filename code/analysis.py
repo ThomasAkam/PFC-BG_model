@@ -24,9 +24,6 @@ from collections import namedtuple
 
 import two_step_task as ts
 
-def one_hot(y, num_classes):
-    """ 1-hot encodes a tensor """
-    return np.eye(num_classes, dtype='uint8')[y]
 plt.rcParams['pdf.fonttype'] = 42
 plt.rc("axes.spines", top=False, right=False)
 
@@ -309,10 +306,10 @@ def _get_value_updates(run_data, last_n=10):
         ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
         _, ss_pfc_states_B_torch = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
         # Compute values of both second step states on each trial.
-        _, V_ssA = Str_model(torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states)), 
+        _, V_ssA = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_A), task.n_states), 
                              torch.detach(ss_pfc_states_A_torch).clone())
     
-        _, V_ssB = Str_model(torch.from_numpy(one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states)), 
+        _, V_ssB = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_B), task.n_states), 
                                               torch.detach(ss_pfc_states_B_torch).clone())
         # Compute value changes as a function of trial outcome and same/different second-step state.
         dVA = np.diff(tensor.detach(V_ssA).numpy().squeeze())
@@ -419,7 +416,7 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
     choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
     torch.save(Str_model.state_dict(), 'original_weights.pt' )
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
-    action_probs,_ = Str_model(torch.from_numpy(one_hot(ep.states, task.n_states)), 
+    action_probs,_ = Str_model(F.one_hot(torch.tensor(ep.states), task.n_states), 
                                torch.from_numpy(np.vstack(ep.pfc_states)))
     choice_probs = np.stack([tensor.detach(action_probs).numpy()[ch_inds,ts.choose_B],
                              tensor.detach(action_probs).numpy()[ch_inds,ts.choose_A]])
@@ -437,7 +434,7 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         # Compute gradients due to opto stim.
         
         # Critic loss.
-        tr_action_probs, tr_value = Str_model(torch.from_numpy(one_hot(ep.states[i], task.n_states)[np.newaxis,:]), 
+        tr_action_probs, tr_value = Str_model(F.one_hot(torch.tensor(ep.states[i]), task.n_states)[None,:], 
                                               torch.from_numpy(ep.pfc_states[i][np.newaxis,:]))# Action probs and values for single trial.
         critic_loss = -2*stim_strength*tr_value
         # Actor loss.
@@ -453,7 +450,7 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         SGD_optimiser.step()
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
-        nt_action_probs, _ = Str_model(torch.from_numpy(one_hot(ep.states[j], task.n_states)[np.newaxis,:]),
+        nt_action_probs, _ = Str_model(F.one_hot(torch.tensor(ep.states[j]), task.n_states)[None,:],
                                        torch.from_numpy(ep.pfc_states[j][np.newaxis,:]))
         choice_probs[:,t+1] = (tensor.detach(nt_action_probs).numpy()[0,ts.choose_B],
                                tensor.detach(nt_action_probs).numpy()[0,ts.choose_A])
