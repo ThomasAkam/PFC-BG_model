@@ -49,7 +49,6 @@ def load_run(run_dir):
             self.num_layers=1
             self.rnn=nn.GRU(input_size, params['n_pfc'], 1, batch_first=True)
             self.state_pred=nn.Linear(params['n_pfc'],task.n_states)
-            self.float()
         def forward(self, x):
             h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
             out, _=self.rnn(x,h0)
@@ -63,7 +62,6 @@ def load_run(run_dir):
             self.input=nn.Linear((task.n_states+params['n_pfc']),params['n_str'])
             self.actor=nn.Linear(params['n_str'], task.n_actions)
             self.critic=nn.Linear(params['n_str'],1)
-            self.float()
         def forward(self, obs_state, pfc_state):
             y=torch.hstack((obs_state, pfc_state))
             y=F.relu(self.input(y))
