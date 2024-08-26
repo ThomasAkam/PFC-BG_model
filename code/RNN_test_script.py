@@ -36,7 +36,6 @@ for i in range(n_steps):
     s, r = task.step(actions[i])
     states[i] = s
     rewards[i] = r
-
 states_v = F.one_hot(torch.from_numpy(states), task.n_states)*(torch.from_numpy(rewards))[:,None]
 actions_v = F.one_hot(torch.from_numpy(actions), task.n_actions)
 states_actions = torch.hstack([states_v, actions_v])
@@ -67,8 +66,9 @@ class PFC_model(nn.Module):
         out, _=self.rnn(x,h0)
         hidden=out[:,-1,:]
         out=F.softmax(self.state_pred(hidden))
-        return out, hidden                                                                                                               
+        return out, hidden      # hidden used to get output of rnn layer.                                                                                                         
 model=PFC_model()
+#loss_fn=nn.CrossEntropyLoss()
 loss_fn= nn.MSELoss()
 optimizer=torch.optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -94,6 +94,8 @@ for epoch in range (epochs):
 
 with torch.no_grad():
     y_pred, RNN_state=  model(x[-1000:])
+
+#%% Plotting
 
 # Plot predicted reward probabilities across trials for test data.
 y_pred=tensor.detach(y_pred).numpy()

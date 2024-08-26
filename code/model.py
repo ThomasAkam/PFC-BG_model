@@ -61,7 +61,6 @@ def run_simulation(save_dir=None, pm=default_params):
         input_size=(task.n_states+task.n_actions)
         pfc_input_buffer = torch.zeros([pm['n_back'], task.n_states+task.n_actions])
    
-    #PFC model
     class PFC(nn.Module):
     
         def __init__(self):
@@ -214,9 +213,8 @@ def run_simulation(save_dir=None, pm=default_params):
         # Update PFC weights.
 
         if pm['pred_rewarded_only']: # PFC is trained to predict its current input given previous input.
-            pfc_numpy=np.array(pfc_inputs[:-1])
-            x=tensor.float(torch.from_numpy(pfc_numpy))
-            y=tensor.float(F.one_hot(torch.tensor(states[1:]), task.n_states)*np.array(rewards)[1:,np.newaxis])
+            x=tensor.float(torch.from_numpy(np.array(pfc_inputs[:-1])))
+            y=tensor.float(F.one_hot(torch.tensor(states[1:]), task.n_states)*np.array(rewards)[1:,None])
             batchsize=x.size()[0]
             batchdata=torch.utils.data.TensorDataset(x, y)
             batchloader=torch.utils.data.DataLoader(dataset=batchdata, batch_size=batchsize, shuffle=False)
