@@ -20,7 +20,7 @@ The file [run_experiment.py](./code/run_experiment.py) in the `code` folder cont
 ## Requirements:
 
 - Python 3
-- PyTorch
+- pyTorch
 - numpy
 - pandas
 - matplotlib
