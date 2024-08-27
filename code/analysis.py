@@ -51,6 +51,7 @@ def load_run(run_dir):
     pfc_model.load_state_dict(checkpoint['PFC_model_state_dict'])
     str_model.load_state_dict(checkpoint['Str_model_state_dict'])
     pfc_optimizer.load_state_dict(checkpoint['pfc_optimizer'])
+    return Run_data(params, episode_buffer, pfc_model, str_model, task)
 
 def load_experiment(exp_dir, good_only=True):
     '''Load data from an experiment comprising multiple simulation runs, if good_only
