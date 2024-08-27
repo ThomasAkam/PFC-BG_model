@@ -19,6 +19,7 @@ from sklearn.decomposition import PCA
 from torch import Tensor as tensor
 from torch import nn
 import torch.nn.functional as F
+from model import Str_model, PFC_model
 from collections import namedtuple
 
 import two_step_task as ts
@@ -36,51 +37,19 @@ def load_run(run_dir):
             params = json.load(fp)
     with open(os.path.join(run_dir, 'episodes.pkl'), 'rb') as f: 
         episode_buffer = pickle.load(f)
-    ##Initialise models and optimizers
-    #PFC model
-    class pfc(nn.Module):
-        def __init__(self):
-            super(pfc,self).__init__()
-            if params['pred_rewarded_only']:
-                input_size=(task.n_states)
-            else: 
-                input_size=(task.n_states+task.n_actions)
-            self.hidden_size= params['n_pfc']
-            self.num_layers=1
-            self.rnn=nn.GRU(input_size, params['n_pfc'], 1, batch_first=True)
-            self.state_pred=nn.Linear(params['n_pfc'],task.n_states)
-        def forward(self, x):
-            h0=torch.zeros(self.num_layers, x.size(0), self.hidden_size)
-            out, _=self.rnn(x,h0)
-            hidden=out[:,-1,:]
-            out=F.softmax(self.state_pred(hidden))
-            return out, hidden 
-    #Str model                                                                                                  
-    class bg(nn.Module):
-        def __init__(self):
-            super(bg, self).__init__()
-            self.input=nn.Linear((task.n_states+params['n_pfc']),params['n_str'])
-            self.actor=nn.Linear(params['n_str'], task.n_actions)
-            self.critic=nn.Linear(params['n_str'],1)
-        def forward(self, obs_state, pfc_state):
-            y=torch.hstack((obs_state, pfc_state))
-            y=F.relu(self.input(y))
-            actor=F.softmax(self.actor(y), dim=-1)
-            critic=self.critic(y)
-            return actor, critic
-    PFC_model=pfc()
-    Str_model= bg()
-    pfc_optimizer=torch.optim.Adam(PFC_model.parameters(), lr=params['pfc_learning_rate'])
-    #str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=params['str_learning_rate'])
+    
+    pfc_model=PFC_model()
+    str_model= Str_model()
+    pfc_optimizer=torch.optim.Adam(pfc_model.parameters(), lr=params['pfc_learning_rate'])
 
     PATH=os.path.join(run_dir, 'model.pt')
     checkpoint=torch.load(PATH)
-    PFC_model.load_state_dict(checkpoint['PFC_model_state_dict'])
-    Str_model.load_state_dict(checkpoint['Str_model_state_dict'])
+    pfc_model.load_state_dict(checkpoint['PFC_model_state_dict'])
+    str_model.load_state_dict(checkpoint['Str_model_state_dict'])
     pfc_optimizer.load_state_dict(checkpoint['pfc_optimizer'])
     #str_optimizer.load_state_dict(checkpoint['str_optimizer'])
     task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
-    return Run_data(params, episode_buffer, PFC_model, Str_model, task)
+    return Run_data(params, episode_buffer, pfc_model, str_model, task)
 
 def load_experiment(exp_dir, good_only=True):
     '''Load data from an experiment comprising multiple simulation runs, if good_only
@@ -288,7 +257,7 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save
 def _get_value_updates(run_data, last_n=10):
     '''Compute the change in second-step values from one trial to the next for one simulation run.'''
     'params', 'episode_buffer', 'PFC_model', 'Str_model', 'task'
-    _, episode_buffer, PFC_model, Str_model, task =  run_data
+    _, episode_buffer, pfc_model, str_model, task =  run_data
     value_updates = np.zeros([last_n, 4])
     for i,ep in enumerate(episode_buffer[-last_n:]):
         _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
@@ -296,15 +265,15 @@ def _get_value_updates(run_data, last_n=10):
         ss_pfc_inputs = ep.pfc_inputs[ss_inds]
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_A]  = 1
-        _, ss_pfc_states_A = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
+        _, ss_pfc_states_A = pfc_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
-        _, ss_pfc_states_B = PFC_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
+        _, ss_pfc_states_B = pfc_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
         # Compute values of both second step states on each trial.
-        _, V_ssA = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_A), task.n_states), 
+        _, V_ssA = str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_A), task.n_states), 
                              torch.detach(ss_pfc_states_A).clone())
     
-        _, V_ssB = Str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_B), task.n_states), 
+        _, V_ssB = str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_B), task.n_states), 
                                               torch.detach(ss_pfc_states_B).clone())
         # Compute value changes as a function of trial outcome and same/different second-step state.
         dVA = np.diff(tensor.detach(V_ssA).numpy().squeeze())
@@ -407,18 +376,18 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=1, stim_prob=0.
 def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
     '''Evalute how training the striatum model using gradients due to opto RPE
     on individual trials affects stay probability for one episode (ep).''' 
-    params, _, _, Str_model, task = run_data
+    params, _, _, str_model, task = run_data
     choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
-    torch.save(Str_model.state_dict(), 'original_weights.pt' )
+    torch.save(str_model.state_dict(), 'original_weights.pt' )
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
-    action_probs,_ = Str_model(F.one_hot(torch.tensor(ep.states), task.n_states), 
+    action_probs,_ = str_model(F.one_hot(torch.tensor(ep.states), task.n_states), 
                                torch.from_numpy(np.vstack(ep.pfc_states)))
     choice_probs = np.stack([tensor.detach(action_probs).numpy()[ch_inds,ts.choose_B],
                              tensor.detach(action_probs).numpy()[ch_inds,ts.choose_A]])
     # Compute A/B choice probabilities following opto stim for randomly selected set of trials. 
     stim_trials = np.random.rand(choice_probs.shape[1])<stim_prob
     
-    SGD_optimiser = torch.optim.SGD(Str_model.parameters(),lr=params['str_learning_rate'])
+    SGD_optimiser = torch.optim.SGD(str_model.parameters(),lr=params['str_learning_rate'])
     for t, stim_trial in enumerate(stim_trials[:-1]): # Loop over trials.
         if not stim_trial:
             continue
@@ -429,7 +398,7 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         # Compute gradients due to opto stim.
         
         # Critic loss.
-        tr_action_probs, tr_value = Str_model(F.one_hot(torch.tensor(ep.states[i]), task.n_states)[None,:], 
+        tr_action_probs, tr_value =str_model(F.one_hot(torch.tensor(ep.states[i]), task.n_states)[None,:], 
                                               torch.from_numpy(ep.pfc_states[i][np.newaxis,:]))# Action probs and values for single trial.
         critic_loss = -2*stim_strength*tr_value
         # Actor loss.
@@ -445,12 +414,12 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         SGD_optimiser.step()
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
-        nt_action_probs, _ = Str_model(F.one_hot(torch.tensor(ep.states[j]), task.n_states)[None,:],
+        nt_action_probs, _ = str_model(F.one_hot(torch.tensor(ep.states[j]), task.n_states)[None,:],
                                        torch.from_numpy(ep.pfc_states[j][np.newaxis,:]))
         choice_probs[:,t+1] = (tensor.detach(nt_action_probs).numpy()[0,ts.choose_B],
                                tensor.detach(nt_action_probs).numpy()[0,ts.choose_A])
         # Reset model weights.
-        Str_model.load_state_dict(torch.load('original_weights.pt'))
+        str_model.load_state_dict(torch.load('original_weights.pt'))
         
     # Normalise choice probs to sum to 1 (as non-choice actions have non-zero prob).
     choice_probs = choice_probs/np.sum(choice_probs,0)
