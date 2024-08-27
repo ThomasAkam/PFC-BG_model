@@ -44,7 +44,7 @@ default_params = {
     'entropy_loss_weight' : 0.05}
 
 #%% Run simulation.
-
+# PFC model.
 class PFC_model (nn.Module):
         def __init__(self,pm, input_size, task):
             super(PFC_model,self).__init__()
@@ -58,7 +58,7 @@ class PFC_model (nn.Module):
             hidden=out[:,-1,:]
             out=F.softmax(self.state_pred(hidden))
             return out, hidden         #Hidden used to get state of RNN layer 
-
+# Striatum model
 class Str_model(nn.Module):
         def __init__(self, pm, task):
             super(Str_model, self).__init__()
@@ -80,7 +80,6 @@ def run_simulation(save_dir=None, pm=default_params):
     task = ts.Two_step(good_prob=pm['good_prob'], block_len=pm['block_len'])
     
     # PFC model.
-    
     if pm['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
         input_size=(task.n_states)
         pfc_input_buffer =torch.zeros([pm['n_back'], task.n_states])
