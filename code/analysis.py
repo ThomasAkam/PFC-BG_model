@@ -38,18 +38,19 @@ def load_run(run_dir):
     with open(os.path.join(run_dir, 'episodes.pkl'), 'rb') as f: 
         episode_buffer = pickle.load(f)
     
-    pfc_model=PFC_model()
-    str_model= Str_model()
+    task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
+    if params['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
+        input_size=(task.n_states)
+    else: # PFC input is 1 hot encoding of observable state and previous action.
+        input_size=(task.n_states+task.n_actions)
+       
+    pfc_model=PFC_model(params, input_size, task)
+    str_model= Str_model(params, task)
     pfc_optimizer=torch.optim.Adam(pfc_model.parameters(), lr=params['pfc_learning_rate'])
-
-    PATH=os.path.join(run_dir, 'model.pt')
-    checkpoint=torch.load(PATH)
+    checkpoint=torch.load(os.path.join(run_dir, 'model.pt'))
     pfc_model.load_state_dict(checkpoint['PFC_model_state_dict'])
     str_model.load_state_dict(checkpoint['Str_model_state_dict'])
     pfc_optimizer.load_state_dict(checkpoint['pfc_optimizer'])
-    #str_optimizer.load_state_dict(checkpoint['str_optimizer'])
-    task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
-    return Run_data(params, episode_buffer, pfc_model, str_model, task)
 
 def load_experiment(exp_dir, good_only=True):
     '''Load data from an experiment comprising multiple simulation runs, if good_only

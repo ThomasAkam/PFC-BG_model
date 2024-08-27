@@ -46,7 +46,6 @@ default_params = {
 #%% Run simulation.
 
 class PFC_model (nn.Module):
-    
         def __init__(self,pm, input_size, task):
             super(PFC_model,self).__init__()
             self.hidden_size= pm['n_pfc']
@@ -90,9 +89,9 @@ def run_simulation(save_dir=None, pm=default_params):
         pfc_input_buffer = torch.zeros([pm['n_back'], task.n_states+task.n_actions])
    
                                                                                           
-    pfc_model=pfc_model (pm, input_size)
+    pfc_model=PFC_model(pm, input_size, task)
     pfc_loss_fn= nn.MSELoss()
-    pfc_optimizer=torch.optim.Adam(pfc_model .parameters(), lr=pm['pfc_learning_rate'])
+    pfc_optimizer=torch.optim.Adam(pfc_model.parameters(), lr=pm['pfc_learning_rate'])
 
     def update_pfc_input(a,s,r):
         '''Update the inputs to the PFC network given the action, subsequent state and reward.'''
@@ -113,8 +112,8 @@ def run_simulation(save_dir=None, pm=default_params):
         return masked_pfc_inputs
     
     # Striatum model
-    str_model=Str_model()
-    str_optimizer=torch.optim.Adam(Str_model.parameters(), lr=pm['str_learning_rate'])
+    str_model=Str_model(pm, task)
+    str_optimizer=torch.optim.Adam(str_model.parameters(), lr=pm['str_learning_rate'])
     
     # Environment loop.
     
