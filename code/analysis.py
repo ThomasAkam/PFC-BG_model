@@ -10,22 +10,22 @@ import numpy as np
 import pandas as pd
 import pylab as plt
 import seaborn as sns
-import tensorflow as tf
+import torch 
 import statsmodels.formula.api as smf
 from scipy.special import logit
 from scipy.stats import ttest_1samp, sem
 from statsmodels.stats.proportion import proportions_ztest
 from sklearn.decomposition import PCA
-from tensorflow import keras
+from torch import Tensor as tensor
+from torch import nn
+import torch.nn.functional as F
+from model import Str_model, PFC_model
 from collections import namedtuple
 
 import two_step_task as ts
 
 plt.rcParams['pdf.fonttype'] = 42
 plt.rc("axes.spines", top=False, right=False)
-
-one_hot = keras.utils.to_categorical
-sse_loss = keras.losses.MeanSquaredError(reduction=tf.keras.losses.Reduction.SUM)
 
 Run_data = namedtuple('Run_data', ['params', 'episode_buffer', 'PFC_model', 'Str_model', 'task']) # Holds data from one simulation run.
 
@@ -37,16 +37,27 @@ def load_run(run_dir):
             params = json.load(fp)
     with open(os.path.join(run_dir, 'episodes.pkl'), 'rb') as f: 
         episode_buffer = pickle.load(f)
-    PFC_model = keras.models.load_model(os.path.join(run_dir, 'PFC_model'))
-    Str_model = keras.models.load_model(os.path.join(run_dir, 'Str_model'))
+    
     task = ts.Two_step(good_prob=params['good_prob'], block_len=params['block_len'])
-    return Run_data(params, episode_buffer, PFC_model, Str_model, task)
+    if params['pred_rewarded_only']: # PFC input is one-hot encoding of observable state on rewarded trias, 0 vector on non-rewarded.
+        input_size=(task.n_states)
+    else: # PFC input is 1 hot encoding of observable state and previous action.
+        input_size=(task.n_states+task.n_actions)
+       
+    pfc_model=PFC_model(params, input_size, task)
+    str_model= Str_model(params, task)
+    pfc_optimizer=torch.optim.Adam(pfc_model.parameters(), lr=params['pfc_learning_rate'])
+    checkpoint=torch.load(os.path.join(run_dir, 'model.pt'))
+    pfc_model.load_state_dict(checkpoint['PFC_model_state_dict'])
+    str_model.load_state_dict(checkpoint['Str_model_state_dict'])
+    pfc_optimizer.load_state_dict(checkpoint['pfc_optimizer'])
+    return Run_data(params, episode_buffer, pfc_model, str_model, task)
 
 def load_experiment(exp_dir, good_only=True):
     '''Load data from an experiment comprising multiple simulation runs, if good_only
     is True then only runs for which the reward rate in the last 10 episodes is
    significantly higher than 0.5 are returned.'''
-    run_dirs = os.listdir(exp_dir)
+    run_dirs = os.listdir(exp_dir)[1:]
     experiment_data = [load_run(os.path.join(exp_dir, run_dir)) for run_dir in run_dirs]
     if good_only:
         experiment_data = [run_data for run_data in experiment_data 
@@ -248,26 +259,27 @@ def second_step_value_update_analysis(experiment_data, last_n=10, fig_no=2, save
 def _get_value_updates(run_data, last_n=10):
     '''Compute the change in second-step values from one trial to the next for one simulation run.'''
     'params', 'episode_buffer', 'PFC_model', 'Str_model', 'task'
-    _, episode_buffer, PFC_model, Str_model, task =  run_data
+    _, episode_buffer, pfc_model, str_model, task =  run_data
     value_updates = np.zeros([last_n, 4])
     for i,ep in enumerate(episode_buffer[-last_n:]):
         _, sec_steps, _, outcomes, _, ss_inds, _ = _get_CSTO(ep, return_inds=True)
         # Generate PFC activity that would have occured had each second step state been reached on each trial.
-        Get_pfc_state = keras.Model(inputs=PFC_model.input, # Model variant used to get state of RNN layer.
-                                     outputs=PFC_model.get_layer('rnn').output)
         ss_pfc_inputs = ep.pfc_inputs[ss_inds]
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_A]  = 1
-        ss_pfc_states_A = Get_pfc_state(ss_pfc_inputs) # PFC activity if second-step reached was A.
+        _, ss_pfc_states_A = pfc_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was A.
         ss_pfc_inputs[:,-1,:task.n_states] = 0
         ss_pfc_inputs[:,-1,ts.sec_step_B]  = 1
-        ss_pfc_states_B = Get_pfc_state(ss_pfc_inputs) # PFC activity if second-step reached was B.
+        _, ss_pfc_states_B = pfc_model(tensor.float(torch.from_numpy(ss_pfc_inputs))) # PFC activity if second-step reached was B.
         # Compute values of both second step states on each trial.
-        _, V_ssA = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_A, task.n_states), ss_pfc_states_A])
-        _, V_ssB = Str_model([one_hot(np.ones(len(ss_inds), int)*ts.sec_step_B, task.n_states), ss_pfc_states_B])
+        _, V_ssA = str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_A), task.n_states), 
+                             torch.detach(ss_pfc_states_A).clone())
+    
+        _, V_ssB = str_model(F.one_hot(torch.tensor(np.ones(len(ss_inds), int)*ts.sec_step_B), task.n_states), 
+                                              torch.detach(ss_pfc_states_B).clone())
         # Compute value changes as a function of trial outcome and same/different second-step state.
-        dVA = np.diff(V_ssA.numpy().squeeze())
-        dVB = np.diff(V_ssB.numpy().squeeze())
+        dVA = np.diff(tensor.detach(V_ssA).numpy().squeeze())
+        dVB = np.diff(tensor.detach(V_ssB).numpy().squeeze())
         rew_same_dV = np.hstack([dVA[(sec_steps[:-1] == 1) &  outcomes[:-1]],
                                  dVB[(sec_steps[:-1] == 0) &  outcomes[:-1]]])
         rew_diff_dV = np.hstack([dVA[(sec_steps[:-1] == 0) &  outcomes[:-1]],
@@ -366,18 +378,18 @@ def opto_stim_analysis(experiment_data, last_n=10, stim_strength=1, stim_prob=0.
 def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
     '''Evalute how training the striatum model using gradients due to opto RPE
     on individual trials affects stay probability for one episode (ep).''' 
-    params, _, _, Str_model, task = run_data
+    params, _, _, str_model, task = run_data
     choices, sec_steps, transitions, outcomes, ch_inds, ss_inds, oc_inds = _get_CSTO(ep, return_inds=True)
-    orig_weights = Str_model.get_weights()
-    
+    torch.save(str_model.state_dict(), 'original_weights.pt' )
     # Compute A/B choice probabilities for each trial in the absence of stimulation.
-    action_probs = Str_model([one_hot(ep.states, task.n_states), tf.concat(ep.pfc_states,0)])[0].numpy()
-    choice_probs = np.stack([action_probs[ch_inds,ts.choose_B],action_probs[ch_inds,ts.choose_A]])
-    
+    action_probs,_ = str_model(F.one_hot(torch.tensor(ep.states), task.n_states), 
+                               torch.from_numpy(np.vstack(ep.pfc_states)))
+    choice_probs = np.stack([tensor.detach(action_probs).numpy()[ch_inds,ts.choose_B],
+                             tensor.detach(action_probs).numpy()[ch_inds,ts.choose_A]])
     # Compute A/B choice probabilities following opto stim for randomly selected set of trials. 
     stim_trials = np.random.rand(choice_probs.shape[1])<stim_prob
     
-    SGD_optimiser = keras.optimizers.SGD(learning_rate=params['str_learning_rate'])
+    SGD_optimiser = torch.optim.SGD(str_model.parameters(),lr=params['str_learning_rate'])
     for t, stim_trial in enumerate(stim_trials[:-1]): # Loop over trials.
         if not stim_trial:
             continue
@@ -386,25 +398,30 @@ def _opto_stay_probs(run_data, ep, stim_type, stim_strength, stim_prob):
         elif stim_type == 'outcome_time':
             i = ss_inds[t] # Index of current trial second-step in episode.
         # Compute gradients due to opto stim.
-        with tf.GradientTape() as tape:
-                # Critic loss.
-                tr_action_probs, tr_value = Str_model(
-                    [one_hot(ep.states[i], task.n_states)[np.newaxis,:], ep.pfc_states[i][np.newaxis,:]]) # Action probs and values for single trial.
-                critic_loss = -2*stim_strength*tr_value
-                # Actor loss.
-                log_chosen_prob = tf.math.log(tr_action_probs[0, ep.actions[i]])
-                entropy = -tf.reduce_sum(tr_action_probs*tf.math.log(tr_action_probs))
-                actor_loss = -log_chosen_prob*stim_strength-entropy*params['entropy_loss_weight']
-                # Compute gradients.
-                grads = tape.gradient(actor_loss+critic_loss, Str_model.trainable_variables)
+        
+        # Critic loss.
+        tr_action_probs, tr_value =str_model(F.one_hot(torch.tensor(ep.states[i]), task.n_states)[None,:], 
+                                              torch.from_numpy(ep.pfc_states[i][np.newaxis,:]))# Action probs and values for single trial.
+        critic_loss = -2*stim_strength*tr_value
+        # Actor loss.
+        log_chosen_prob = torch.log(tr_action_probs[0, ep.actions[i]])
+        entropy = -torch.sum(tr_action_probs*torch.log(tr_action_probs))
+        actor_loss = -log_chosen_prob*stim_strength-entropy*params['entropy_loss_weight']
+        # Compute gradients.
+        policy_loss=critic_loss+ actor_loss
+        SGD_optimiser.zero_grad()
+        policy_loss.backward()
+        
         # Update model weights.
-        SGD_optimiser.apply_gradients(zip(grads, Str_model.trainable_variables))
+        SGD_optimiser.step()
         # Compute next trial choice probs.
         j = ch_inds[t+1] # Index in episode of next trial choice.
-        nt_action_probs, _ = Str_model([one_hot(ep.states[j], task.n_states)[np.newaxis,:], ep.pfc_states[j][np.newaxis,:]])
-        choice_probs[:,t+1] = (nt_action_probs[0,ts.choose_B],nt_action_probs[0,ts.choose_A])
+        nt_action_probs, _ = str_model(F.one_hot(torch.tensor(ep.states[j]), task.n_states)[None,:],
+                                       torch.from_numpy(ep.pfc_states[j][np.newaxis,:]))
+        choice_probs[:,t+1] = (tensor.detach(nt_action_probs).numpy()[0,ts.choose_B],
+                               tensor.detach(nt_action_probs).numpy()[0,ts.choose_A])
         # Reset model weights.
-        Str_model.set_weights(orig_weights)
+        str_model.load_state_dict(torch.load('original_weights.pt'))
         
     # Normalise choice probs to sum to 1 (as non-choice actions have non-zero prob).
     choice_probs = choice_probs/np.sum(choice_probs,0)
