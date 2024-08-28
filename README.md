@@ -4,11 +4,13 @@
 
  [![DOI](https://zenodo.org/badge/633124583.svg)](https://zenodo.org/doi/10.5281/zenodo.10079814)
 
-This repository contains code used to generate the neural network model figure from the [manuscript](https://www.biorxiv.org/content/10.1101/2021.06.25.449995v3):
+This repository contains code used to generate the neural network model figure from the [manuscript](https://www.nature.com/articles/s41593-023-01542-x):
 
-> Blanco-Pozo, M., Akam, T., &  Walton, M. (2023).  **Dopamine-independent state inference mediates expert reward guided decision making**  *bioRxiv*, 2023-04.
+> Blanco-Pozo, M., Akam, T., &  Walton, M. (2023).  **Dopamine-independent effect of rewards on choices through hidden-state inference.**  *Nature Neuroscience* 27.2 (2024): 286-297.
 
 The model consists of a recurrent neural network representing prefrontal cortex (PFC) and a feedforward network representing basal-ganglia.  The PFC network is trained to predict the next observation and in doing so learns to infer hidden task states.  The basal ganglia network is trained using actor-critic RL (A2C) to predict future reward and choose appropriate actions given the current observation and PFC activity.  
+
+The `main` branch of the repository contains the original Tensorflow/Keras implementation of the model used in the manuscript.  The `pyTorch` branch contains a re-implementation of the model in pyTorch by [@dylanhxzhao](https://github.com/dylanhxzhao).
 
 ## Usage:
 
